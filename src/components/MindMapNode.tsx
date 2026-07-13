@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, Node } from '@xyflow/react';
-import { Edit2, Plus, Trash2, ChevronRight, ChevronDown, Info } from 'lucide-react';
+import { Edit2, Plus, Trash2, ChevronRight, ChevronDown, Info, Pin } from 'lucide-react';
 import { MindMapNodeType } from '../types';
 import { cn } from '../lib/utils';
 
@@ -13,6 +13,7 @@ type NodeData = {
   hasChildren?: boolean;
   summary?: string;
   details?: string;
+  isLocked?: boolean;
   birth?: string;
   death?: string;
   era?: string;
@@ -142,13 +143,21 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
             </form>
           ) : (
             <div className="flex flex-col items-center gap-1">
-              <span className={cn(
-                "font-bold text-center leading-tight transition-colors",
-                getFontSize(),
-                data.depth === 0 ? "text-white" : "text-slate-800"
-              )}>
-                {data.label.length > 60 ? `${data.label.substring(0, 57)}...` : data.label}
-              </span>
+              <div className="flex items-center justify-center gap-1.5">
+                {data.isLocked && (
+                  <Pin size={12} className={cn(
+                    "rotate-45",
+                    data.depth === 0 ? "text-white/70" : "text-slate-400"
+                  )} />
+                )}
+                <span className={cn(
+                  "font-bold text-center leading-tight transition-colors whitespace-pre-wrap break-words w-full",
+                  getFontSize(),
+                  data.depth === 0 ? "text-white" : "text-slate-800"
+                )}>
+                  {data.label}
+                </span>
+              </div>
               
               {/* Universal Metadata Badge (e.g. Years, Categories, Short labels) */}
               {data.summary && data.depth > 0 && (

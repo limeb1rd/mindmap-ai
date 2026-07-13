@@ -11,15 +11,62 @@ import {
   Node,
   ReactFlowInstance,
   Panel,
+  BaseEdge,
+  getBezierPath,
+  EdgeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Search, Maximize2, X, Info, Layers, BookOpen, ExternalLink, History, ChevronRight, ChevronDown, Focus, RefreshCw } from 'lucide-react';
+import { Search, Maximize2, X, Info, Layers, BookOpen, ExternalLink, History, ChevronRight, ChevronDown, Focus, RefreshCw, Plus } from 'lucide-react';
 import { MindMapNode as MindMapNodeComponent } from './MindMapNode';
 import { MindMapNode as MindMapNodeData, MindMapData, Language, DisplayMode, translations } from '../types';
 import { cn } from '../lib/utils';
 
 const nodeTypes = {
   mindmap: MindMapNodeComponent,
+};
+
+const MindMapEdge = ({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  animated,
+}: EdgeProps) => {
+  const xDistance = Math.abs(targetX - sourceX);
+  // Adaptive curvature: flatter for short distances, more pronounced for long ones
+  const curvature = Math.max(0.1, Math.min(0.4, xDistance / 800));
+
+  const [edgePath] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    curvature,
+  });
+
+  return (
+    <BaseEdge 
+      id={id} 
+      path={edgePath} 
+      markerEnd={markerEnd} 
+      style={{
+        ...style,
+        strokeWidth: style.strokeWidth || 2,
+        transition: 'stroke 0.3s ease, stroke-width 0.3s ease, d 0.7s cubic-bezier(0.2, 0, 0, 1)',
+      }} 
+    />
+  );
+};
+
+const edgeTypes = {
+  mindmap: MindMapEdge,
 };
 
 interface Props {
@@ -49,6 +96,10 @@ export const MindMapViewer: React.FC<Props> = ({
   const autoLayoutCache = React.useRef<Record<string, { x: number, y: number }>>({});
   const dragStartPositions = React.useRef<Record<string, { x: number, y: number }>>({});
   const lastInteractionRef = React.useRef<{ type: 'toggle' | 'add' | 'delete' | 'edit' | 'load', id?: string }>({ type: 'load' });
+
+  // Optimization: Caches for layout properties
+  const dimensionsCache = React.useRef<Map<string, { width: number, height: number, hash: string }>>(new Map());
+  const footprintCache = React.useRef<Map<string, { footprint: number, hash: string }>>(new Map());
 
   const handleInit = useCallback((instance: ReactFlowInstance) => {
     rfInstance.current = instance;
@@ -292,8 +343,17 @@ export const MindMapViewer: React.FC<Props> = ({
       ...data,
       children: data.children.map(updateTree).filter((n): n is MindMapNodeData => n !== null)
     });
+    
+    // Clean up manual positions for deleted node and its descendants
+    const deletedIds = [id, ...getDescendantIds(id)];
+    deletedIds.forEach(deletedId => {
+      delete nodePositions.current[deletedId];
+      dimensionsCache.current.delete(deletedId);
+      footprintCache.current.delete(deletedId);
+    });
+
     if (selectedNode?.id === id) setSelectedNode(null);
-  }, [data, onChange, selectedNode]);
+  }, [data, onChange, selectedNode, getDescendantIds]);
 
   const handleToggleExpand = useCallback((id: string) => {
     lastInteractionRef.current = { type: 'toggle', id };
@@ -324,48 +384,8 @@ export const MindMapViewer: React.FC<Props> = ({
     const newEdges: Edge[] = [];
     
     const rootId = 'root';
-    const MIN_V_GAP = 60; // Minimum 40px as requested, 60px for extra "air"
-    const MIN_H_GAP = 100; // Minimum 80px as requested, 100px for extra "air"
-
-    const getEstimatedDimensions = (node: MindMapNodeData, depth: number) => {
-      const textLen = node.title.length;
-      const charWidth = 9; 
-      const horizontalPadding = depth === 0 ? 140 : (depth === 1 ? 120 : 80);
-      const toggleButtonMargin = 70;
-      
-      const width = Math.max(depth === 0 ? 320 : 240, (textLen * charWidth) + horizontalPadding + toggleButtonMargin);
-      
-      const baseHeights = {
-        0: 140, // Root
-        1: 110, // Strategic
-        2: 95,  // Tactical
-        3: 85,  // Descriptive
-        4: 75,  // Detailed
-        5: 70   // Atomic
-      };
-      const nodeHeight = baseHeights[depth as keyof typeof baseHeights] || 70;
-      
-      return { width, height: nodeHeight };
-    };
-
-    const getSubtreeHeight = (node: MindMapNodeData, depth: number): number => {
-      let shouldShowChildren = true;
-      if (displayMode === 'overview') shouldShowChildren = depth < 2;
-      else if (displayMode === 'study') shouldShowChildren = depth < 3;
-      else shouldShowChildren = node.expanded;
-
-      const { height: nodeHeight } = getEstimatedDimensions(node, depth);
-
-      if (!shouldShowChildren || !node.children || node.children.length === 0) {
-        return nodeHeight + MIN_V_GAP;
-      }
-
-      // Recursively calculate total height needed for the subtree
-      const childrenHeight = node.children.reduce((acc, child) => acc + getSubtreeHeight(child, depth + 1), 0);
-      
-      // Subtree height must accommodate all children subtrees or its own height
-      return Math.max(childrenHeight, nodeHeight + MIN_V_GAP);
-    };
+    const MIN_V_GAP = 80; 
+    const MIN_H_GAP = 120;
 
     // Helper to get center from top-left (for manual positions)
     const getCenterFromTopLeft = (pos: { x: number, y: number }, width: number, height: number) => ({
@@ -379,36 +399,136 @@ export const MindMapViewer: React.FC<Props> = ({
       y: center.y - height / 2
     });
 
-    const traverse = (
-      node: MindMapNodeData,
-      depth: number,
-      parentId: string,
-      color: string,
-      side: 'left' | 'right',
-      centerX: number,
-      centerY: number
-    ) => {
-      let shouldShow = true;
-      if (displayMode === 'overview') shouldShow = depth <= 2;
-      else if (displayMode === 'study') shouldShow = depth <= 3;
+    // Global max widths per depth for column alignment
+    const maxLevelWidths = new Map<number, number>();
+    
+    const preCalculateLevelWidths = (node: MindMapNodeData, depth: number) => {
+      const dims = getEstimatedDimensions(node, depth);
+      const currentMax = maxLevelWidths.get(depth) || 0;
+      maxLevelWidths.set(depth, Math.max(currentMax, dims.width));
       
-      if (!shouldShow) return;
+      if (node.children) {
+        node.children.forEach(child => preCalculateLevelWidths(child, depth + 1));
+      }
+    };
 
+    // Adaptive Dynamic Gap Strategy
+    const getGaps = (depth: number, childCount: number = 0, nodeHeight: number = 80) => {
+      let v = Math.max(20, 100 / (depth + 1) + 15);
+      const h = Math.max(60, 160 / (depth + 1) + 40);
+      if (childCount > 3) v *= (1 + (childCount - 3) * 0.15);
+      if (nodeHeight > 100) v *= 1.15;
+      return { v, h };
+    };
+
+    const getEstimatedDimensions = (node: MindMapNodeData, depth: number) => {
+      const cacheKey = node.id;
+      const hash = `${node.title}-${node.summary}-${depth}-${node.children?.length || 0}`;
+      const cached = dimensionsCache.current.get(cacheKey);
+      
+      if (cached && cached.hash === hash) {
+        return { width: cached.width, height: cached.height };
+      }
+
+      const textLen = node.title.length;
+      const charWidth = depth === 0 ? 9 : (depth === 1 ? 8 : 7);
+      const horizontalPadding = depth === 0 ? 100 : (depth === 1 ? 80 : 40);
+      const toggleButtonMargin = node.children && node.children.length > 0 ? 60 : 0;
+      const maxWidth = depth === 0 ? 450 : 400;
+      const preferredWidth = (textLen * charWidth) + horizontalPadding + toggleButtonMargin;
+      const width = Math.min(maxWidth, Math.max(depth === 0 ? 220 : 160, preferredWidth));
+      const contentWidth = width - horizontalPadding - toggleButtonMargin;
+      const lines = Math.ceil((textLen * charWidth) / contentWidth);
+      const lineHeight = depth === 0 ? 32 : (depth === 1 ? 24 : 20);
+      const verticalPadding = depth === 0 ? 60 : (depth === 1 ? 50 : 35);
+      const metadataHeight = node.summary ? 20 : 0;
+      const height = Math.max(
+        depth === 0 ? 120 : (depth === 1 ? 90 : 70), 
+        (lines * lineHeight) + verticalPadding + metadataHeight
+      );
+      
+      dimensionsCache.current.set(cacheKey, { width, height, hash });
+      return { width, height };
+    };
+
+    const virtualRoot: MindMapNodeData = {
+      id: rootId,
+      title: mindMap.title,
+      summary: mindMap.summary,
+      children: mindMap.children || [],
+      expanded: true,
+      type: 'root'
+    } as any;
+
+    const subtreeHeights = new Map<string, number>();
+
+    const calculateSubtreeFootprint = (node: MindMapNodeData, depth: number): number => {
+      const childCount = node.children?.length || 0;
+      const childrenHash = node.children?.map(c => c.id).join(',') || '';
+      const nodeExpanded = (displayMode === 'overview' ? depth < 1 : (displayMode === 'study' ? depth < 2 : (node.expanded ?? true)));
+      const hash = `${nodeExpanded}-${displayMode}-${childrenHash}-${childCount}`;
+      
+      const cached = footprintCache.current.get(node.id);
+      if (cached && cached.hash === hash) {
+        subtreeHeights.set(node.id, cached.footprint);
+        return cached.footprint;
+      }
+
+      const { height: nodeHeight } = getEstimatedDimensions(node, depth);
+      const { v: vGap } = getGaps(depth, childCount, nodeHeight);
+      
+      let shouldShowChildren = true;
+      if (displayMode === 'overview') shouldShowChildren = depth < 2;
+      else if (displayMode === 'study') shouldShowChildren = depth < 3;
+      else shouldShowChildren = node.expanded ?? true;
+
+      let footprint = 0;
+      if (!shouldShowChildren || !node.children || node.children.length === 0) {
+        footprint = nodeHeight + vGap;
+      } else {
+        const childrenFootprint = node.children.reduce((acc, child) => {
+          return acc + calculateSubtreeFootprint(child, depth + 1);
+        }, 0);
+        footprint = Math.max(childrenFootprint, nodeHeight + vGap);
+      }
+
+      subtreeHeights.set(node.id, footprint);
+      footprintCache.current.set(node.id, { footprint, hash });
+      return footprint;
+    };
+
+    // Dynamic X-offsets based on actual node widths of previous levels
+    const getLevelX = (depth: number, side: 'left' | 'right') => {
+      let x = 0;
+      for (let i = 0; i < depth; i++) {
+        const levelWidth = maxLevelWidths.get(i) || 200;
+        const gap = getGaps(i, 0).h; 
+        x += levelWidth + gap;
+      }
+      return side === 'right' ? x : -x;
+    };
+
+    const positionNode = (
+      node: MindMapNodeData, 
+      centerX: number, 
+      centerY: number, 
+      depth: number, 
+      side: 'left' | 'right',
+      color: string
+    ) => {
       const dimensions = getEstimatedDimensions(node, depth);
+      const childCount = node.children?.length || 0;
+      const { v: vGap } = getGaps(depth, childCount, dimensions.height);
+      const footprint = subtreeHeights.get(node.id) || (dimensions.height + vGap);
       
-      // MANDATORY FRESH CALCULATION: Ignore autoLayoutCache for tree nodes 
-      // to ensure perfect alignment upon structure changes (expand/collapse).
-      // We only respect manual user overrides (nodePositions).
       const manualPos = nodePositions.current[node.id];
-      
+      const isLocked = !!manualPos;
       let finalCenter = { x: centerX, y: centerY };
-      
+
       if (manualPos) {
         finalCenter = getCenterFromTopLeft(manualPos, dimensions.width, dimensions.height);
       } else {
-        // Update cache so React Flow knows where we put it procedurally
-        const tl = getTopLeftFromCenter(finalCenter, dimensions.width, dimensions.height);
-        autoLayoutCache.current[node.id] = tl;
+        autoLayoutCache.current[node.id] = getTopLeftFromCenter(finalCenter, dimensions.width, dimensions.height);
       }
 
       newNodes.push({
@@ -423,6 +543,7 @@ export const MindMapViewer: React.FC<Props> = ({
           depth,
           side,
           isExpanded: node.expanded,
+          isLocked,
           hasChildren: node.children && node.children.length > 0,
           onEdit: (id: string, text: string) => handleEdit(id, text, false),
           onAdd: handleAdd,
@@ -436,60 +557,51 @@ export const MindMapViewer: React.FC<Props> = ({
           centerY: finalCenter.y
         },
         position: getTopLeftFromCenter(finalCenter, dimensions.width, dimensions.height),
-        style: { transition: 'all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)' }
+        style: { 
+          transition: 'transform 0.7s cubic-bezier(0.2, 0, 0, 1), opacity 0.5s ease-out',
+          zIndex: depth === 0 ? 100 : 10 - depth
+        }
       });
 
-      if (parentId) {
-        newEdges.push({
-          id: `e-${parentId}-${node.id}`,
-          source: parentId,
-          target: node.id,
-          sourceHandle: side === 'right' ? 's-right' : 's-left',
-          targetHandle: side === 'right' ? 't-left' : 't-right',
-          type: 'simplebezier',
-          animated: selectedNode?.id === node.id || selectedNode?.id === parentId,
-          style: { 
-            stroke: color, 
-            strokeWidth: Math.max(2, 8 - depth * 1.5),
-            opacity: 0.8,
-            transition: 'all 0.4s ease'
-          },
-        });
-      }
+      let shouldShowChildren = true;
+      if (displayMode === 'overview') shouldShowChildren = depth < 2;
+      else if (displayMode === 'study') shouldShowChildren = depth < 3;
+      else shouldShowChildren = node.expanded ?? true;
 
-      if (node.children && node.children.length > 0) {
-        let shouldExpand = node.expanded;
-        if (displayMode === 'overview') shouldExpand = depth < 2;
-        else if (displayMode === 'study') shouldExpand = depth < 3;
-
-        if (shouldExpand) {
-          const sortedChildren = [...node.children].sort((a, b) => {
-            return a.title.localeCompare(b.title, undefined, { numeric: true });
-          });
-
-          // Horizontal step: parent half-width + gap + child average width estimate
-          const horizontalStep = (dimensions.width / 2) + MIN_H_GAP + 150; 
+      if (shouldShowChildren && node.children && node.children.length > 0) {
+        let currentChildY = centerY - (footprint / 2);
+        const nextX = getLevelX(depth + 1, side);
+        
+        node.children.forEach((child, index) => {
+          const childFootprint = subtreeHeights.get(child.id) || 0;
+          const childYCenter = currentChildY + (childFootprint / 2);
           
-          const totalSubtreeHeight = sortedChildren.reduce((acc, child) => acc + getSubtreeHeight(child, depth + 1), 0);
-          let currentYOffset = -totalSubtreeHeight / 2;
-
-          sortedChildren.forEach((child) => {
-            const childSubtreeHeight = getSubtreeHeight(child, depth + 1);
-            const childCenterOffset = currentYOffset + (childSubtreeHeight / 2);
-            
-            const nextCenterX = finalCenter.x + (side === 'right' ? horizontalStep : -horizontalStep);
-            const nextCenterY = finalCenter.y + childCenterOffset;
-            
-            traverse(child, depth + 1, node.id, color, side, nextCenterX, nextCenterY);
-            currentYOffset += childSubtreeHeight;
+          newEdges.push({
+            id: `e-${node.id}-${child.id}`,
+            source: node.id,
+            target: child.id,
+            sourceHandle: side === 'right' ? 's-right' : 's-left',
+            targetHandle: side === 'right' ? 't-left' : 't-right',
+            type: 'mindmap',
+            style: { stroke: color, strokeWidth: Math.max(1, 4 - depth) },
+            animated: false,
           });
-        }
+
+          const childColor = depth === 0 ? branchColors[index % branchColors.length] : color;
+          positionNode(child, nextX, childYCenter, depth + 1, side, childColor);
+          currentChildY += childFootprint;
+        });
       }
     };
 
-    // Root node placement
-    const rootDimensions = getEstimatedDimensions({ title: mindMap.title } as any, 0);
+    // Root node placement logic
+    preCalculateLevelWidths(virtualRoot, 0);
+    calculateSubtreeFootprint(virtualRoot, 0);
+    const rootDimensions = getEstimatedDimensions(virtualRoot, 0);
+    
+    // Position root at 0,0
     const manualRootPos = nodePositions.current[rootId];
+    const isRootLocked = !!manualRootPos;
     let rootCenter = { x: 0, y: 0 };
     if (manualRootPos) {
       rootCenter = getCenterFromTopLeft(manualRootPos, rootDimensions.width, rootDimensions.height);
@@ -500,10 +612,11 @@ export const MindMapViewer: React.FC<Props> = ({
       type: 'mindmap',
       selected: selectedNode?.id === rootId,
       data: { 
-        label: mindMap.title,
+        label: virtualRoot.title,
         type: 'root',
         isRoot: true,
-        summary: mindMap.summary,
+        isLocked: isRootLocked,
+        summary: virtualRoot.summary,
         depth: 0,
         onEdit: (id: string, text: string) => handleEdit(id, text, true),
         onAdd: () => handleAdd(rootId),
@@ -517,36 +630,82 @@ export const MindMapViewer: React.FC<Props> = ({
         centerY: rootCenter.y
       },
       position: getTopLeftFromCenter(rootCenter, rootDimensions.width, rootDimensions.height),
+      style: { 
+        transition: 'transform 0.7s cubic-bezier(0.2, 0, 0, 1)',
+        zIndex: 1000
+      }
     });
 
-    if (mindMap.children && mindMap.children.length > 0) {
-      const totalNodes = mindMap.children.length;
-      const leftChildren = mindMap.children.filter((_, i) => i >= Math.ceil(totalNodes / 2));
-      const rightChildren = mindMap.children.filter((_, i) => i < Math.ceil(totalNodes / 2));
-      
-      const leftTotalHeight = leftChildren.reduce((acc, child) => acc + getSubtreeHeight(child, 1), 0);
-      const rightTotalHeight = rightChildren.reduce((acc, child) => acc + getSubtreeHeight(child, 1), 0);
-      
-      let currentLeftY = rootCenter.y - leftTotalHeight / 2;
-      let currentRightY = rootCenter.y - rightTotalHeight / 2;
-      
-      const RADIUS_X = rootDimensions.width / 2 + MIN_H_GAP + 200;
+    // Distribute root children more intelligently by balancing subtree footprints
+    const rootChildren = [...(virtualRoot.children || [])];
+    const leftChildren: MindMapNodeData[] = [];
+    const rightChildren: MindMapNodeData[] = [];
+    
+    let leftTotalFootprint = 0;
+    let rightTotalFootprint = 0;
 
-      mindMap.children.forEach((node, index) => {
-        const isRight = index < Math.ceil(totalNodes / 2);
-        const side = isRight ? 'right' : 'left';
-        const subtreeHeight = getSubtreeHeight(node, 1);
-        const centerX = rootCenter.x + (isRight ? RADIUS_X : -RADIUS_X);
-        const centerY = isRight ? currentRightY + subtreeHeight / 2 : currentLeftY + subtreeHeight / 2;
-        const color = branchColors[index % branchColors.length];
-        traverse(node, 1, rootId, color, side, centerX, centerY);
-        if (isRight) currentRightY += subtreeHeight;
-        else currentLeftY += subtreeHeight;
+    // Sort by footprint to place largest subtrees first for better packing
+    rootChildren.sort((a, b) => (subtreeHeights.get(b.id) || 0) - (subtreeHeights.get(a.id) || 0));
+
+    rootChildren.forEach((child) => {
+      const footprint = subtreeHeights.get(child.id) || 0;
+      if (rightTotalFootprint <= leftTotalFootprint) {
+        rightChildren.push(child);
+        rightTotalFootprint += footprint;
+      } else {
+        leftChildren.push(child);
+        leftTotalFootprint += footprint;
+      }
+    });
+
+    let currentRightY = rootCenter.y - (rightTotalFootprint / 2);
+    const nextRightX = getLevelX(1, 'right');
+    rightChildren.forEach((child, i) => {
+      const childFootprint = subtreeHeights.get(child.id) || 0;
+      const childYCenter = currentRightY + (childFootprint / 2);
+      
+      const branchColor = branchColors[i % branchColors.length];
+      
+      newEdges.push({
+        id: `e-root-${child.id}`,
+        source: rootId,
+        target: child.id,
+        sourceHandle: 's-right',
+        targetHandle: 't-left',
+        type: 'mindmap',
+        style: { stroke: branchColor, strokeWidth: 4 },
+        animated: false,
       });
-    }
 
-    // FINAL PASS: Collision Detection & Resolution (on centers)
-    for (let i = 0; i < 5; i++) {
+      positionNode(child, nextRightX, childYCenter, 1, 'right', branchColor);
+      currentRightY += childFootprint;
+    });
+
+    let currentLeftY = rootCenter.y - (leftTotalFootprint / 2);
+    const nextLeftX = getLevelX(1, 'left');
+    leftChildren.forEach((child, i) => {
+      const childFootprint = subtreeHeights.get(child.id) || 0;
+      const childYCenter = currentLeftY + (childFootprint / 2);
+      
+      const branchColor = branchColors[(i + rightChildren.length) % branchColors.length];
+      
+      newEdges.push({
+        id: `e-root-${child.id}`,
+        source: rootId,
+        target: child.id,
+        sourceHandle: 's-left',
+        targetHandle: 't-right',
+        type: 'mindmap',
+        style: { stroke: branchColor, strokeWidth: 4 },
+        animated: false,
+      });
+
+      positionNode(child, nextLeftX, childYCenter, 1, 'left', branchColor);
+      currentLeftY += childFootprint;
+    });
+
+    // FINAL PASS: Collision Detection & Resolution (Optimized for density)
+    for (let i = 0; i < 3; i++) {
       let collisionsFound = false;
       for (let j = 0; j < newNodes.length; j++) {
         for (let k = j + 1; k < newNodes.length; k++) {
@@ -558,49 +717,43 @@ export const MindMapViewer: React.FC<Props> = ({
           const w2 = n2.data.width as number;
           const h2 = n2.data.height as number;
 
+          const bufferH = 40;
+          const bufferV = 30;
+
           const b1 = {
-            left: (n1.data.centerX as number) - w1 / 2 - MIN_H_GAP / 2,
-            right: (n1.data.centerX as number) + w1 / 2 + MIN_H_GAP / 2,
-            top: (n1.data.centerY as number) - h1 / 2 - MIN_V_GAP / 2,
-            bottom: (n1.data.centerY as number) + h1 / 2 + MIN_V_GAP / 2,
+            left: (n1.data.centerX as number) - w1 / 2 - bufferH / 2,
+            right: (n1.data.centerX as number) + w1 / 2 + bufferH / 2,
+            top: (n1.data.centerY as number) - h1 / 2 - bufferV / 2,
+            bottom: (n1.data.centerY as number) + h1 / 2 + bufferV / 2,
           };
           
           const b2 = {
-            left: (n2.data.centerX as number) - w2 / 2 - MIN_H_GAP / 2,
-            right: (n2.data.centerX as number) + w2 / 2 + MIN_H_GAP / 2,
-            top: (n2.data.centerY as number) - h2 / 2 - MIN_V_GAP / 2,
-            bottom: (n2.data.centerY as number) + h2 / 2 + MIN_V_GAP / 2,
+            left: (n2.data.centerX as number) - w2 / 2 - bufferH / 2,
+            right: (n2.data.centerX as number) + w2 / 2 + bufferH / 2,
+            top: (n2.data.centerY as number) - h2 / 2 - bufferV / 2,
+            bottom: (n2.data.centerY as number) + h2 / 2 + bufferV / 2,
           };
 
           const isOverlapping = !(b1.right < b2.left || b1.left > b2.right || b1.bottom < b2.top || b1.top > b2.bottom);
 
           if (isOverlapping) {
             collisionsFound = true;
-            // Solve by pushing away
             const dx = (n1.data.centerX as number) - (n2.data.centerX as number);
             const dy = (n1.data.centerY as number) - (n2.data.centerY as number);
             
-            if (Math.abs(dy) > 0.01) {
-              const overlapY = Math.min(b1.bottom - b2.top, b2.bottom - b1.top);
-              const moveY = (overlapY + MIN_V_GAP) / 2;
-              if (dy > 0) {
-                (n1.data.centerY as any) += moveY;
-                (n2.data.centerY as any) -= moveY;
-              } else {
-                (n1.data.centerY as any) -= moveY;
-                (n2.data.centerY as any) += moveY;
-              }
+            const overlapX = Math.min(b1.right - b2.left, b2.right - b1.left);
+            const overlapY = Math.min(b1.bottom - b2.top, b2.bottom - b1.top);
+
+            if (overlapY < overlapX * 1.2) {
+              const moveY = (overlapY + 10) / 2;
+              const dirY = dy >= 0 ? 1 : -1;
+              (n1.data.centerY as any) += moveY * dirY;
+              (n2.data.centerY as any) -= moveY * dirY;
             } else {
-              // Same horizontal line? Push horizontally
-              const overlapX = Math.min(b1.right - b2.left, b2.right - b1.left);
-              const moveX = (overlapX + MIN_H_GAP) / 2;
-              if (dx > 0) {
-                (n1.data.centerX as any) += moveX;
-                (n2.data.centerX as any) -= moveX;
-              } else {
-                (n1.data.centerX as any) -= moveX;
-                (n2.data.centerX as any) += moveX;
-              }
+              const moveX = (overlapX + 10) / 2;
+              const dirX = dx >= 0 ? 1 : -1;
+              (n1.data.centerX as any) += moveX * dirX;
+              (n2.data.centerX as any) -= moveX * dirX;
             }
           }
         }
@@ -667,20 +820,50 @@ export const MindMapViewer: React.FC<Props> = ({
     const { nodes: newNodes, edges: newEdges } = transformToFlow(data);
     
     setNodes((currentNodes) => {
-      return newNodes.map((newNode) => {
+      const nextNodes = newNodes.map((newNode) => {
         const existingNode = currentNodes.find((n) => n.id === newNode.id);
+        const isManual = nodePositions.current[newNode.id];
+        const isDragging = existingNode?.dragging;
         
-        // Always preserve position if it exists, unless structure changed significantly 
-        // (like a whole new set of nodes loaded)
-        if (existingNode) {
-          return {
-            ...newNode,
-            position: existingNode.position,
-            measured: existingNode.measured,
+        // Disable transitions during dragging for responsiveness
+        if (isDragging && newNode.style) {
+          newNode.style = {
+            ...newNode.style,
+            transition: 'none'
           };
+        }
+        
+        if (existingNode) {
+          // If manually positioned, keep that position
+          if (isManual) {
+            return {
+              ...newNode,
+              position: existingNode.position,
+              measured: existingNode.measured,
+            };
+          }
+
+          // Deep compare data and position to avoid unnecessary object changes
+          const posChanged = Math.abs(existingNode.position.x - newNode.position.x) > 0.1 || 
+                           Math.abs(existingNode.position.y - newNode.position.y) > 0.1;
+          
+          // Selection and data comparison
+          const dataChanged = JSON.stringify(existingNode.data) !== JSON.stringify(newNode.data);
+          const selectionChanged = existingNode.selected !== newNode.selected;
+          
+          if (!posChanged && !dataChanged && !selectionChanged) {
+            return existingNode;
+          }
         }
         return newNode;
       });
+
+      // If nothing actually changed (rare but possible), return same array
+      if (nextNodes.length === currentNodes.length && nextNodes.every((n, i) => n === currentNodes[i])) {
+        return currentNodes;
+      }
+      
+      return nextNodes;
     });
 
     setEdges((currentEdges) => {
@@ -723,17 +906,68 @@ export const MindMapViewer: React.FC<Props> = ({
             rfInstance.current?.fitView({ duration: 800, padding: 0.3 });
           }, 50);
         } else if (interaction.type === 'toggle' && interaction.id) {
-          // Professional toggle behavior: maintain scale and focus smoothly
-          const toggledNode = rfInstance.current.getNode(interaction.id);
-          if (toggledNode) {
+          // Intelligent camera management for toggling:
+          // 1. If the expanded branch fits in current viewport, don't change zoom.
+          // 2. If it doesn't fit, zoom out only as much as needed.
+          const rfNodes = rfInstance.current.getNodes();
+          const targetNode = rfNodes.find(n => n.id === interaction.id);
+          
+          if (targetNode) {
+            // Identify all nodes in the affected subtree
+            const edges = rfInstance.current.getEdges();
+            const subtreeIds = new Set([interaction.id]);
+            const stack = [interaction.id];
+            
+            while (stack.length > 0) {
+              const currentId = stack.pop()!;
+              for (const edge of edges) {
+                if (edge.source === currentId && !subtreeIds.has(edge.target)) {
+                  subtreeIds.add(edge.target);
+                  stack.push(edge.target);
+                }
+              }
+            }
+
+            const subtreeNodes = rfNodes.filter(n => subtreeIds.has(n.id));
+            
+            // Calculate bounding box of the subtree
+            const bounds = subtreeNodes.reduce((acc, node) => {
+              const width = node.measured?.width || 0;
+              const height = node.measured?.height || 0;
+              return {
+                x: Math.min(acc.x, node.position.x),
+                y: Math.min(acc.y, node.position.y),
+                x2: Math.max(acc.x2, node.position.x + width),
+                y2: Math.max(acc.y2, node.position.y + height),
+              };
+            }, { 
+              x: targetNode.position.x, 
+              y: targetNode.position.y, 
+              x2: targetNode.position.x + (targetNode.measured?.width || 0), 
+              y2: targetNode.position.y + (targetNode.measured?.height || 0) 
+            });
+
             const currentZoom = rfInstance.current.getZoom();
-            // We keep the current zoom level to avoid "flying back"
-            // and use setCenter for a smooth transition to the expanded area
-            rfInstance.current.setCenter(
-              toggledNode.position.x,
-              toggledNode.position.y,
-              { duration: 1000, zoom: currentZoom }
-            );
+            const container = document.querySelector('.react-flow') as HTMLElement;
+            
+            if (container) {
+              const { clientWidth, clientHeight } = container;
+              const padding = 100; // Comfortable margin
+              
+              const neededWidth = (bounds.x2 - bounds.x) + padding * 2;
+              const neededHeight = (bounds.y2 - bounds.y) + padding * 2;
+              
+              // Calculate zoom needed to fit the subtree
+              const fitZoom = Math.min(clientWidth / neededWidth, clientHeight / neededHeight);
+              
+              // Intelligent rule: Never zoom in more than current, but zoom out if needed.
+              const targetZoom = Math.min(currentZoom, fitZoom);
+              
+              const centerX = bounds.x + (bounds.x2 - bounds.x) / 2;
+              const centerY = bounds.y + (bounds.y2 - bounds.y) / 2;
+
+              rfInstance.current.setCenter(centerX, centerY, { duration: 1000, zoom: targetZoom });
+            }
           }
         } else if (interaction.type === 'add' && interaction.id) {
           // Focus on the new addition smoothly
@@ -791,11 +1025,12 @@ export const MindMapViewer: React.FC<Props> = ({
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
           onInit={handleInit}
           minZoom={0.05}
           maxZoom={2}
-          fitViewOptions={{ padding: 0.3 }}
+          fitViewOptions={{ padding: 0.2 }}
         >
           <Background 
             color="#e2e8f0" 

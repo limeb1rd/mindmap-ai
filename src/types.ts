@@ -18,6 +18,7 @@ export interface MindMapNode {
   summary?: string;
   details?: string;
   expanded?: boolean;
+  positionLocked?: boolean;
   children?: MindMapNode[];
   links?: { targetId: string; label?: string; type?: string }[];
 }

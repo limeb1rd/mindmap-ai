@@ -1,0 +1,8 @@
+{
+  "name": "AI Mind Map Generator",
+  "description": "Generate interactive mind maps from text using AI. Visualize ideas, edit structures, and export to PNG, SVG, or PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

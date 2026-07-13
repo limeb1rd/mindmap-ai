@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script>
+      // Silent HMR failure handling
+      window.addEventListener('unhandledrejection', (event) => {
+        const msg = event.reason?.message || '';
+        if (msg.includes('vite') || msg.includes('websocket') || msg.includes('ws://')) {
+          event.preventDefault();
+        }
+      });
+      // Suppress noisy websocket console logs if they happen as errors
+      const _error = console.error;
+      console.error = (...args) => {
+        const msg = args[0]?.toString() || '';
+        if (msg.includes('[vite]') && (msg.includes('websocket') || msg.includes('failed to connect'))) {
+          return;
+        }
+        _error.apply(console, args);
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

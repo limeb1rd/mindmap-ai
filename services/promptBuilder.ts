@@ -23,17 +23,18 @@ export function buildSearchKnowledgePrompt(query: string, language: string): str
 
 export function buildSkeletonGenerationPrompt(content: string): string {
   return `
-          Convert the following knowledge synthesis into a comprehensive Mind Map JSON SKELETON.
+          Convert the following knowledge synthesis into a structural Mind Map JSON SKELETON.
           
-          PHASE 1: UNRESTRICTED ARCHITECTURE
-          Organize ALL information provided in the source content. 
-          - DO NOT limit the depth of the tree.
-          - DO NOT limit the number of children for any node.
-          - Every single unique piece of information in the source must be represented as a node or attribute.
+          PHASE 1: STRUCTURAL ARCHITECTURE
+          Organize the core pillars and major categories from the source content.
+          - LIMIT the depth of the tree to LEVEL 3 (Root -> Level 1 Groups -> Level 2 Items).
+          - Do NOT generate deep detail branches (contribution, instruments, works, etc.) at this stage.
+          - Focus on the main structural components.
           
-          PHASE 2: DYNAMIC BRANCHING
-          - Create a rich, branching structure that reflects the complexity of the subject.
-          - Use meaningful hierarchy: Core Subject -> Pillars -> Sub-categories -> Details -> Sub-details.
+          PHASE 2: HIERARCHY
+          - Level 1 (Root): The main subject.
+          - Level 2 (Groups): Major thematic pillars or chapters.
+          - Level 3 (Items): Significant entities or concepts within those pillars.
           
           PHASE 3: NODE DEFINITIONS
           For every node:
@@ -41,11 +42,7 @@ export function buildSkeletonGenerationPrompt(content: string): string {
           - summary: A concise identifier (1-5 words).
           - type: A custom classification reflecting its role in the system.
           - id: Unique string.
-          - expanded: true for the first 3 levels, false for others.
-          
-          PHASE 4: NO TRUNCATION POLICY
-          - It is FORBIDDEN to omit information for the sake of compactness.
-          - The priority is COMPLETENESS. If the source has 50 points, generate at least 50 nodes.
+          - expanded: true.
           
           OUTPUT SCHEMA:
           {
@@ -57,15 +54,42 @@ export function buildSkeletonGenerationPrompt(content: string): string {
                 "title": "Node Title",
                 "summary": "Short identifier",
                 "type": "Semantic Type",
-                "expanded": boolean,
-                "children": [ ... ]
+                "expanded": true,
+                "children": [] 
               }
             ]
           }
 
           SOURCE CONTENT:
           "${content}"
+
+          Return ONLY the raw JSON object matching the schema above. Do not include markdown code fences, explanations, or any text outside the JSON.
         `;
+}
+
+export function buildBranchExpansionPrompt(nodeTitle: string, nodeType: string, parentContext: string, language: string): string {
+  return `
+    Expand the Mind Map node "${nodeTitle}" (Type: ${nodeType}) with detailed sub-branches.
+    Context: This node is part of a larger mind map about "${parentContext}".
+    
+    TASK: Generate ONLY the children (sub-branches) for this specific node.
+    - Create 3-7 highly relevant sub-nodes that explore the specific details of this entity.
+    - Example for a composer: "Contribution to music", "Instruments", "Notable works", "Historical significance".
+    - Each sub-node can have its own children if necessary to represent complex details (e.g., chronology of works).
+    
+    STRUCTURE FOR EACH CHILD:
+    - id: Unique string.
+    - title: Precise title.
+    - summary: Short description (1-5 words).
+    - type: Category (e.g., "work", "technique", "impact").
+    - children: Recursive array of sub-nodes if more detail is needed.
+
+    LANGUAGE: ${language === 'ru' ? 'Russian' : 'English'}.
+    
+    Return ONLY a raw JSON array of MindMapNode objects. 
+    Example: [{"id": "...", "title": "...", "summary": "...", "type": "...", "children": []}]
+    Do not include markdown code fences or explanations.
+  `;
 }
 
 export function buildNodeDetailsPrompt(nodeTitle: string, nodeType: string, context: string | undefined, language: string): string {

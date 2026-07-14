@@ -10,10 +10,17 @@ export interface LayoutOptions {
   displayMode: DisplayMode;
   selectedNodeId?: string | null;
   branchColors: string[];
+  expandingNodes?: Set<string>;
   t: {
     edit: string;
     add: string;
     delete: string;
+    rootNode: string;
+    node: string;
+    expand: string;
+    collapse: string;
+    editNode: string;
+    addChild: string;
   };
   callbacks: {
     onEdit: (id: string, text: string, isRoot: boolean) => void;
@@ -81,6 +88,7 @@ export class LayoutEngine {
           color,
           isExpanded: node.expanded,
           isLocked,
+          isExpanding: options.expandingNodes?.has(node.id),
           hasChildren: node.children && node.children.length > 0,
           onEdit: (id: string, text: string) => options.callbacks.onEdit(id, text, node.depth === 0),
           onAdd: options.callbacks.onAdd,

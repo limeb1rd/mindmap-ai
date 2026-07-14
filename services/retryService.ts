@@ -1,9 +1,10 @@
 
-import { ModelConfig } from "../src/config/ai";
+import { ModelConfig, MODELS } from "../src/config/ai";
 import { ModelManager, RequestContext } from "./modelManager";
 
-const MAX_TOTAL_ATTEMPTS = 6; // Total attempts across all models
+const TOTAL_MAX_RETRIES = MODELS.reduce((acc, m) => acc + m.maxRetries, 0);
 const INITIAL_BACKOFF = 1000;
+const GLOBAL_TIMEOUT_MS = 120000; // Increased to 120s to accommodate multiple model timeouts
 
 export async function withAIDebug<T>(
   operation: (model: string) => Promise<T>, 
@@ -22,35 +23,51 @@ export async function withAIDebug<T>(
 }
 
 export async function withFailover<T>(
-  operation: (model: string) => Promise<T>,
+  operation: (model: string, signal?: AbortSignal) => Promise<T>,
   context: RequestContext,
   label: string
 ): Promise<T> {
   let attempt = 0;
   let lastError: any = null;
+  const startTime = Date.now();
 
-  while (attempt < MAX_TOTAL_ATTEMPTS) {
+  while (attempt < TOTAL_MAX_RETRIES) {
+    // Check for global timeout
+    if (Date.now() - startTime > GLOBAL_TIMEOUT_MS) {
+      console.error(`[Failover][${label}] Global timeout reached after ${Date.now() - startTime}ms`);
+      const timeoutError = new Error("Generation timed out. The AI models are currently busy or the request was too complex. Please try again with a shorter text.");
+      (timeoutError as any).status = 504; // Gateway Timeout
+      throw timeoutError;
+    }
+
     const modelConfig = ModelManager.selectModel({ ...context, attempt });
     const modelName = modelConfig.name;
+    const modelTimeout = modelConfig.timeout;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), modelTimeout);
 
     try {
       if (attempt > 0) {
-        const isModelSwitch = attempt === 1 || attempt === 2;
-        const statusMessage = isModelSwitch 
-          ? `[Failover] Switching to backup model: ${modelName}`
-          : `[Retry] Retrying with ${modelName} (Attempt ${attempt})`;
+        const statusMessage = `[Failover] Attempt ${attempt} using ${modelName} (timeout: ${modelTimeout}ms)`;
         console.log(statusMessage);
       }
 
-      return await operation(modelName);
+      const result = await operation(modelName, controller.signal);
+      clearTimeout(timeoutId);
+      return result;
     } catch (error: any) {
+      clearTimeout(timeoutId);
       lastError = error;
-      const status = error.status || error.response?.status || 500;
+      
+      const isTimeout = error.name === 'AbortError' || error.status === 504;
+      const status = isTimeout ? 504 : (error.status || error.response?.status || 500);
       
       // Log the error for diagnostics
       console.error(`[Failover][${label}] Error on attempt ${attempt} with ${modelName}:`, {
         status,
-        message: error.message
+        message: error.message,
+        isTimeout
       });
 
       // Check if we should retry (429, 5xx, or network issues)
@@ -63,8 +80,15 @@ export async function withFailover<T>(
 
       attempt++;
       
-      if (attempt < MAX_TOTAL_ATTEMPTS) {
+      if (attempt < TOTAL_MAX_RETRIES) {
         const delay = INITIAL_BACKOFF * Math.pow(2, attempt - 1);
+        
+        // Ensure we don't wait if the delay would put us past the timeout
+        if (Date.now() - startTime + delay > GLOBAL_TIMEOUT_MS) {
+           console.error(`[Failover][${label}] Next retry would exceed global timeout. Stopping.`);
+           break;
+        }
+
         console.log(`[Failover] Waiting ${delay}ms before next attempt...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }

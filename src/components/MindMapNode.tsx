@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Handle, Position, NodeProps, Node } from '@xyflow/react';
-import { Edit2, Plus, Trash2, ChevronRight, ChevronDown, Info, Pin } from 'lucide-react';
+import { Edit2, Plus, Trash2, ChevronRight, ChevronDown, Info, Pin, Loader2 } from 'lucide-react';
 import { MindMapNodeType } from '../types';
 import { cn } from '../lib/utils';
 
@@ -10,6 +10,7 @@ type NodeData = {
   color?: string;
   isRoot?: boolean;
   isExpanded?: boolean;
+  isExpanding?: boolean;
   hasChildren?: boolean;
   summary?: string;
   details?: string;
@@ -36,6 +37,12 @@ type NodeData = {
     edit: string;
     add: string;
     delete: string;
+    rootNode: string;
+    node: string;
+    expand: string;
+    collapse: string;
+    editNode: string;
+    addChild: string;
   };
 };
 
@@ -62,6 +69,34 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
 
   const branchColor = data.color || '#64748b';
   
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        data.onSelect(id);
+        break;
+      case 'ArrowRight':
+      case 'ArrowLeft':
+        if (data.hasChildren) {
+          e.preventDefault();
+          data.onToggleExpand(id);
+        }
+        break;
+      case 'Delete':
+      case 'Backspace':
+        if (!data.isRoot) {
+          e.preventDefault();
+          data.onDelete(id);
+        }
+        break;
+      case 'F2':
+        e.preventDefault();
+        setIsEditing(true);
+        break;
+    }
+  };
+
   const getStyles = () => {
     const selectedStyle = selected ? "ring-4 ring-indigo-500/40 border-indigo-500 z-30" : "";
     
@@ -92,14 +127,14 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     // Level 4: Groups/Sub-categories
     if (data.depth === 3) {
       return cn(
-        `bg-white/80 border text-slate-600 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.LEVEL_3}] py-2 px-4 rounded-xl font-semibold italic backdrop-blur-sm`,
+        `bg-white/80 border text-slate-700 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.LEVEL_3}] py-2 px-4 rounded-xl font-semibold italic backdrop-blur-sm`,
         selectedStyle
       );
     }
 
     // Level 5+: Leaves/Items
     return cn(
-      `bg-white/70 border border-slate-200 text-slate-500 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.DEFAULT}] py-1.5 px-3 rounded-lg text-[11px] font-medium backdrop-blur-sm`,
+      `bg-white/70 border border-slate-300 text-slate-600 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.DEFAULT}] py-1.5 px-3 rounded-lg text-[11px] font-medium backdrop-blur-sm`,
       selectedStyle
     );
   };
@@ -111,16 +146,24 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     return "text-[10px]";
   };
 
+  const ariaLabel = `${data.isRoot ? data.t.rootNode : data.t.node}: ${data.label}. ${data.hasChildren ? (data.isExpanded ? data.t.collapse : data.t.expand) : ''}`;
+
   return (
     <div 
       className={cn(
-        "group relative border transition-all duration-300 flex items-center justify-center cursor-pointer select-none",
+        "group relative border transition-all duration-300 flex items-center justify-center cursor-pointer select-none focus:outline-none focus:ring-4 focus:ring-indigo-500/40",
         getStyles()
       )}
       style={{ 
         borderColor: data.isRoot ? undefined : (selected ? undefined : branchColor),
       }}
       onClick={handleNodeClick}
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      role="treeitem"
+      aria-label={ariaLabel}
+      aria-expanded={data.hasChildren ? data.isExpanded : undefined}
+      aria-selected={selected}
     >
       <Handle id="t-top" type="target" position={Position.Top} className="opacity-0 w-0 h-0" />
       <Handle id="t-bottom" type="target" position={Position.Bottom} className="opacity-0 w-0 h-0" />
@@ -141,6 +184,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onBlur={() => handleSubmit()}
+                aria-label={data.t.editNode}
               />
             </form>
           ) : (
@@ -149,8 +193,8 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
                 {data.isLocked && (
                   <Pin size={12} className={cn(
                     "rotate-45",
-                    data.depth === 0 ? "text-white/70" : "text-slate-400"
-                  )} />
+                    data.depth === 0 ? "text-white/70" : "text-slate-600"
+                  )} aria-hidden="true" />
                 )}
                 <span className={cn(
                   "font-bold text-center leading-tight transition-colors whitespace-pre-wrap break-words w-full",
@@ -163,7 +207,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
               
               {/* Universal Metadata Badge (e.g. Years, Categories, Short labels) */}
               {data.summary && data.depth > 0 && (
-                <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full mt-1 leading-none max-w-[150px] truncate">
+                <span className="text-[10px] font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded-full mt-1 leading-none max-w-[150px] truncate">
                   {data.summary}
                 </span>
               )}
@@ -172,26 +216,35 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
         </div>
       </div>
 
-      {/* Expand/Collapse Toggle Button */}
-      {data.hasChildren && (
+      {/* Expand/Collapse Toggle Button or Loading Indicator */}
+      {(data.hasChildren || data.isExpanding) && (
         <button 
           onClick={(e) => {
             e.stopPropagation();
-            data.onToggleExpand(id);
+            if (!data.isExpanding) data.onToggleExpand(id);
           }}
+          disabled={data.isExpanding}
+          tabIndex={-1}
+          aria-label={data.isExpanding ? "Expanding" : (data.isExpanded ? data.t.collapse : data.t.expand)}
           className={cn(
-            "absolute top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border-2 flex items-center justify-center shadow-xl transition-all hover:scale-110 z-50 group/expand",
+            "absolute top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border-2 flex items-center justify-center shadow-xl transition-all z-50 group/expand",
+            data.isExpanding ? "hover:scale-100 cursor-wait" : "hover:scale-110",
             // Positioned outside with a clear gap to avoid overlap
             data.side === 'left' ? `-left-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]` : `-right-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]`,
-            data.isExpanded 
-              ? "text-indigo-600 border-indigo-400 bg-indigo-50" 
-              : "text-slate-500 border-slate-200 bg-white"
+            data.isExpanding 
+              ? "text-indigo-400 border-indigo-200"
+              : (data.isExpanded 
+                ? "text-indigo-600 border-indigo-400 bg-indigo-50" 
+                : "text-slate-600 border-slate-300 bg-white")
           )}
         >
-          {data.isExpanded 
-            ? <ChevronDown size={18} strokeWidth={3} className="transition-transform" /> 
-            : <Plus size={18} strokeWidth={3} className="transition-transform group-hover/expand:rotate-90" />
-          }
+          {data.isExpanding ? (
+            <Loader2 size={16} className="animate-spin text-indigo-500" />
+          ) : (
+            data.isExpanded 
+              ? <ChevronDown size={18} strokeWidth={3} className="transition-transform" /> 
+              : <Plus size={18} strokeWidth={3} className="transition-transform group-hover/expand:rotate-90" />
+          )}
         </button>
       )}
 
@@ -201,6 +254,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
           onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
           className="p-1.5 hover:bg-slate-50 rounded-full text-slate-600 transition-colors"
           title={data.t.edit}
+          aria-label={data.t.editNode}
         >
           <Edit2 size={10} />
         </button>
@@ -208,6 +262,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
           onClick={(e) => { e.stopPropagation(); data.onAdd(id); }}
           className="p-1.5 hover:bg-emerald-50 rounded-full text-emerald-600 transition-colors"
           title={data.t.add}
+          aria-label={data.t.addChild}
         >
           <Plus size={10} />
         </button>
@@ -216,6 +271,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
             onClick={(e) => { e.stopPropagation(); data.onDelete(id); }}
             className="p-1.5 hover:bg-rose-50 rounded-full text-rose-600 transition-colors"
             title={data.t.delete}
+            aria-label={data.t.delete}
           >
             <Trash2 size={10} />
           </button>

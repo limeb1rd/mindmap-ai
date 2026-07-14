@@ -5,6 +5,7 @@ import * as mindMapController from "../controllers/mindMapController";
 const router = express.Router();
 
 router.post("/node-details", mindMapController.getNodeDetails);
+router.post("/expand-node", mindMapController.expandNode);
 router.post("/generate", mindMapController.generateMindMap);
 router.get("/health", mindMapController.getHealth);
 

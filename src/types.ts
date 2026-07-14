@@ -76,6 +76,27 @@ export interface Translation {
   retrying: string;
   usingBackup: string;
   generatingKnowledge: string;
+  restoreDraft: string;
+  restore: string;
+  startNew: string;
+  myMaps: string;
+  noHistory: string;
+  quotaExceeded: string;
+  delete: string;
+  confirmDelete: string;
+  undo: string;
+  redo: string;
+  node: string;
+  rootNode: string;
+  expand: string;
+  collapse: string;
+  addChild: string;
+  editNode: string;
+  showDetails: string;
+  pinNode: string;
+  unpinNode: string;
+  searchPlaceholder: string;
+  resetLayout: string;
 }
 
 export const translations: Record<Language, Translation> = {
@@ -122,7 +143,28 @@ export const translations: Record<Language, Translation> = {
     aiOverloadedTerminal: "Service is temporarily overloaded.\nPlease try again in a few minutes.",
     retrying: "Performing a retry attempt...",
     usingBackup: "Using a backup model...",
-    generatingKnowledge: "Generating knowledge map..."
+    generatingKnowledge: "Generating knowledge map...",
+    restoreDraft: "Restore your last map?",
+    restore: "Restore",
+    startNew: "Start New",
+    myMaps: "My Maps",
+    noHistory: "No saved maps yet",
+    quotaExceeded: "Storage limit reached. Try deleting old maps.",
+    delete: "Delete",
+    confirmDelete: "Are you sure?",
+    undo: "Undo",
+    redo: "Redo",
+    node: "Node",
+    rootNode: "Central Node",
+    expand: "Expand",
+    collapse: "Collapse",
+    addChild: "Add Child Node",
+    editNode: "Edit Node",
+    showDetails: "Show details and research",
+    pinNode: "Pin node position",
+    unpinNode: "Unpin node position",
+    searchPlaceholder: "Search nodes...",
+    resetLayout: "Reset layout",
   },
   ru: {
     title: "AI Генератор Ментальных Карт",
@@ -167,6 +209,27 @@ export const translations: Record<Language, Translation> = {
     aiOverloadedTerminal: "Сервис временно перегружен.\nПопробуйте снова через несколько минут.",
     retrying: "Выполняется повторная попытка...",
     usingBackup: "Используется резервная модель...",
-    generatingKnowledge: "Генерируется карта знаний..."
+    generatingKnowledge: "Генерируется карта знаний...",
+    restoreDraft: "Восстановить последнюю карту?",
+    restore: "Восстановить",
+    startNew: "Начать заново",
+    myMaps: "Мои карты",
+    noHistory: "Нет сохраненных карт",
+    quotaExceeded: "Лимит хранилища превышен. Попробуйте удалить старые карты.",
+    delete: "Удалить",
+    confirmDelete: "Вы уверены?",
+    undo: "Отменить",
+    redo: "Вернуть",
+    node: "Узел",
+    rootNode: "Центральный узел",
+    expand: "Раскрыть",
+    collapse: "Свернуть",
+    addChild: "Добавить дочерний узел",
+    editNode: "Редактировать узел",
+    showDetails: "Показать детали и исследование",
+    pinNode: "Закрепить позицию узла",
+    unpinNode: "Открепить позицию узла",
+    searchPlaceholder: "Поиск узлов...",
+    resetLayout: "Сбросить макет",
   }
 };

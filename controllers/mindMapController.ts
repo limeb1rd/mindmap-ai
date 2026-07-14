@@ -1,6 +1,6 @@
 
 import { Request, Response } from "express";
-import { fetchNodeDetails, generateMindMapFromContent } from "../services/aiService";
+import { fetchNodeDetails, generateMindMapFromContent, expandNodeBranches } from "../services/aiService";
 import { isSearchQuery, gatherSearchKnowledge } from "../services/searchService";
 import { getActiveModelNames } from "../src/config/ai";
 
@@ -21,6 +21,23 @@ export const getNodeDetails = async (req: Request, res: Response) => {
   }
 };
 
+export const expandNode = async (req: Request, res: Response) => {
+  const { nodeTitle, nodeType, parentContext, language, attempt = 0 } = req.body;
+  if (!nodeTitle) return res.status(400).json({ error: "nodeTitle is required" });
+
+  try {
+    const branches = await expandNodeBranches(nodeTitle, nodeType, parentContext, language, attempt);
+    res.json(branches);
+  } catch (error: any) {
+    const status = error.status || error.response?.status || 500;
+    res.status(status).json({ 
+      error: "Failed to expand node branches", 
+      details: error.message,
+      status 
+    });
+  }
+};
+
 export const generateMindMap = async (req: Request, res: Response) => {
   const { text, language, attempt = 0 } = req.body;
   const requestId = Math.random().toString(36).substring(7);
@@ -33,6 +50,13 @@ export const generateMindMap = async (req: Request, res: Response) => {
 
   if (!text) {
     return res.status(400).json({ error: "Text is required" });
+  }
+
+  if (text.length > 10000) {
+    const message = language === 'ru' 
+      ? "Текст слишком длинный (максимум 10000 символов)."
+      : "Text is too long (maximum 10000 characters).";
+    return res.status(400).json({ error: message });
   }
 
   try {

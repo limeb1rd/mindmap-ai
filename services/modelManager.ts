@@ -5,6 +5,7 @@ export enum TaskType {
   SEARCH = "search",
   SKELETON = "skeleton",
   DETAILS = "details",
+  EXPAND = "expand",
 }
 
 export interface RequestContext {
@@ -62,8 +63,8 @@ export class ModelManager {
       return this.findModel("gemini-3.1-flash-lite");
     }
 
-    // RULE: Node Details
-    if (taskType === TaskType.DETAILS) {
+    // RULE: Node Details & Branch Expansion
+    if (taskType === TaskType.DETAILS || taskType === TaskType.EXPAND) {
       // Usually smaller context
       return this.findModel("gemini-3.1-flash-lite");
     }

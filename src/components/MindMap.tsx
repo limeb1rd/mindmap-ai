@@ -18,7 +18,7 @@ import {
   ReactFlowProvider,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Search, Maximize2, X, Info, Layers, BookOpen, ExternalLink, History, ChevronRight, ChevronDown, Focus, RefreshCw, Plus, Download, RotateCcw, Layout } from 'lucide-react';
+import { Search, Maximize2, X, Info, Layers, BookOpen, ExternalLink, History, ChevronRight, ChevronDown, Focus, RefreshCw, Plus, Download, RotateCcw, Layout, Undo2, Redo2 } from 'lucide-react';
 import { MindMapNode as MindMapNodeComponent } from './MindMapNode';
 import { MindMapNode, MindMapData, Language, DisplayMode, translations } from '../types';
 import { cn } from '../lib/utils';
@@ -29,6 +29,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { LayoutEngine, LayoutOptions } from '../services/layoutEngine';
 import { UI_CONFIG } from '../config/ui';
 import { useCamera } from '../hooks/layout/useCamera';
+import { useMindMapHistory } from '../hooks/useMindMapHistory';
 
 const nodeTypes = {
   mindmap: MindMapNodeComponent,
@@ -81,6 +82,7 @@ interface Props {
   onNodeSelect?: (node: MindMapNode) => void;
   selectedNodeDetails?: any;
   isDetailsLoading?: boolean;
+  expandingNodes?: Set<string>;
 }
 
 const MindMapCanvas: React.FC<Props> = ({ 
@@ -90,6 +92,7 @@ const MindMapCanvas: React.FC<Props> = ({
   onChange, 
   onInit,
   onNodeSelect,
+  expandingNodes,
 }) => {
   const [nodes, setNodes, internalOnNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -103,6 +106,8 @@ const MindMapCanvas: React.FC<Props> = ({
   const hasInitialized = useRef(false);
 
   const { handleInit: cameraInit, centerNode, resetView, fitToView, rfInstance } = useCamera();
+
+  const { pushState, undo, redo, canUndo, canRedo } = useMindMapHistory(data, onChange);
 
   const layoutEngine = useMemo(() => 
     new LayoutEngine(nodePositions.current, autoLayoutCache.current), 
@@ -156,6 +161,7 @@ const MindMapCanvas: React.FC<Props> = ({
   }, [data, findNodeById, onNodeSelect, centerNode, rfInstance]);
 
   const handleEdit = useCallback((id: string, text: string, isRoot: boolean) => {
+    pushState(data);
     lastInteractionRef.current = { type: 'edit', id };
     if (isRoot) onChange({ ...data, title: text });
     else {
@@ -171,6 +177,7 @@ const MindMapCanvas: React.FC<Props> = ({
   }, [data, onChange]);
 
   const handleAdd = useCallback((parentId: string) => {
+    pushState(data);
     lastInteractionRef.current = { type: 'add', id: parentId };
     const newNode: MindMapNode = {
       id: `node-${Date.now()}`,
@@ -195,6 +202,7 @@ const MindMapCanvas: React.FC<Props> = ({
   }, [data, language, onChange]);
 
   const handleDelete = useCallback((id: string) => {
+    pushState(data);
     lastInteractionRef.current = { type: 'delete', id };
     const deleteNode = (nodes: MindMapNode[]): MindMapNode[] => {
       return nodes.filter(node => node.id !== id).map(node => ({
@@ -206,6 +214,7 @@ const MindMapCanvas: React.FC<Props> = ({
   }, [data, onChange]);
 
   const handleToggleExpand = useCallback((id: string) => {
+    pushState(data);
     lastInteractionRef.current = { type: 'toggle', id };
     const toggleNode = (nodes: MindMapNode[]): MindMapNode[] => {
       return nodes.map(node => {
@@ -242,6 +251,7 @@ const MindMapCanvas: React.FC<Props> = ({
       displayMode,
       selectedNodeId,
       branchColors,
+      expandingNodes,
       t: t as any,
       callbacks: {
         onEdit: (id, text, root) => callbacksRef.current.onEdit(id, text, root),
@@ -358,13 +368,40 @@ const MindMapCanvas: React.FC<Props> = ({
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input 
                 type="text"
-                placeholder={language === 'ru' ? 'Искать...' : 'Search...'}
+                placeholder={t.searchPlaceholder}
+                aria-label={t.searchPlaceholder}
                 className="pl-9 pr-4 py-2 bg-slate-100/50 rounded-xl text-xs outline-none w-56"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
             <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 border-r border-slate-100 pr-2 mr-2">
+                <button 
+                  onClick={undo}
+                  disabled={!canUndo}
+                  className={cn(
+                    "p-2 rounded-xl transition-colors",
+                    canUndo ? "hover:bg-slate-100 text-slate-500" : "text-slate-200 cursor-not-allowed"
+                  )}
+                  title={t.undo}
+                  aria-label={t.undo}
+                >
+                  <Undo2 size={18} />
+                </button>
+                <button 
+                  onClick={redo}
+                  disabled={!canRedo}
+                  className={cn(
+                    "p-2 rounded-xl transition-colors",
+                    canRedo ? "hover:bg-slate-100 text-slate-500" : "text-slate-200 cursor-not-allowed"
+                  )}
+                  title={t.redo}
+                  aria-label={t.redo}
+                >
+                  <Redo2 size={18} />
+                </button>
+              </div>
               <button 
                 onClick={() => {
                   nodePositions.current = {};
@@ -375,21 +412,24 @@ const MindMapCanvas: React.FC<Props> = ({
                   fitToView();
                 }}
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"
-                title={t.resetLayout || 'Reset layout'}
+                title={t.resetLayout}
+                aria-label={t.resetLayout}
               >
                 <RefreshCw size={18} />
               </button>
               <button 
                 onClick={() => setIsExporting(true)}
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"
-                title={t.export || 'Export'}
+                title={t.export}
+                aria-label={t.export}
               >
                 <Download size={18} />
               </button>
               <button 
                 onClick={() => fitToView()}
                 className="p-2 hover:bg-slate-100 rounded-xl text-slate-500"
-                title={t.fitView || 'Fit view'}
+                title={t.fitView}
+                aria-label={t.fitView}
               >
                 <Maximize2 size={18} />
               </button>

@@ -37,8 +37,6 @@ export function getActiveModelNames(): string[] {
 }
 
 export const AI_CONFIG = {
-  RETRY_DELAYS: [0, 2000, 5000, 10000, 20000],
-  
   LIMITS: {
     MAX_TOKENS: 16384, // Increased to allow larger JSON responses
     MAX_GEN_NODES: 500, // Increased to support "hundreds of nodes"

@@ -7,6 +7,10 @@ import {
   FileText,
   Loader2,
   BrainCircuit,
+  History,
+  Trash2,
+  ChevronRight,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReactFlowInstance } from '@xyflow/react';
@@ -18,9 +22,11 @@ import { cn } from './lib/utils';
 import { useMindMap } from './hooks/useMindMap';
 import { useNodeDetails } from './hooks/useNodeDetails';
 import { useServerHealth } from './hooks/useServerHealth';
+import { usePersistence } from './hooks/usePersistence';
 
 // Services
 import { ExportService } from './services/exportService';
+import { StorageService } from './services/storageService';
 
 // Lazy load visualization components
 const MindMapViewer = lazy(() => import('./components/MindMap').then(m => ({ default: m.MindMapViewer })));
@@ -40,10 +46,23 @@ export default function App() {
     error,
     retryAttempt,
     isOverloaded,
+    expandingNodes,
     generate,
     reset: resetMindMap,
+    loadData,
     setMindMapData
   } = useMindMap(language);
+
+  const {
+    hasDraft,
+    history,
+    quotaError,
+    restoreDraft,
+    discardDraft,
+    addToHistory,
+    deleteHistoryItem,
+    setQuotaError
+  } = usePersistence(mindMapData, loadData);
 
   const {
     nodeDetailsCache,
@@ -63,8 +82,10 @@ export default function App() {
 
   const handleGenerate = useCallback(() => {
     clearNodeCache();
-    generate(inputText);
-  }, [clearNodeCache, generate, inputText]);
+    generate(inputText, (data) => {
+      addToHistory(data);
+    });
+  }, [clearNodeCache, generate, inputText, addToHistory]);
 
   const handleNodeSelect = useCallback((node: MindMapNode) => {
     fetchDetails(node, mindMapData?.title);
@@ -74,6 +95,7 @@ export default function App() {
     resetMindMap();
     setInputText('');
     clearNodeCache();
+    StorageService.clearDraft();
   }, [resetMindMap, clearNodeCache]);
 
   const t = translations[language];
@@ -114,7 +136,7 @@ export default function App() {
             </div>
           </div>
 
-          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
+          <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-3">
             {t.inputLabel}
           </label>
           
@@ -141,9 +163,7 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <Loader2 className="animate-spin" size={16} />
                   <span className="whitespace-pre-line text-center text-[11px]">
-                    {retryAttempt === 0 ? t.generatingKnowledge : 
-                     retryAttempt === 1 ? t.usingBackup : 
-                     t.retrying}
+                    {t.generatingKnowledge}
                   </span>
                 </div>
               </div>
@@ -155,14 +175,62 @@ export default function App() {
             )}
           </button>
 
+          {/* History Section */}
+          <div className="mt-8 flex-1 flex flex-col min-h-0">
+            <div className="flex items-center justify-between mb-4">
+              <label className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">
+                {t.myMaps}
+              </label>
+              {history.length > 0 && (
+                <span className="text-[10px] font-medium text-slate-600">
+                  {history.length}/20
+                </span>
+              )}
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-2 custom-scrollbar">
+              {history.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 opacity-40">
+                  <History size={24} className="text-slate-300 mb-2" />
+                  <span className="text-[10px] text-slate-400 font-medium">{t.noHistory}</span>
+                </div>
+              ) : (
+                history.map((item) => (
+                  <div 
+                    key={item.id}
+                    className="group flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 transition-all border border-transparent hover:border-slate-100 cursor-pointer"
+                    onClick={() => loadData(item.data)}
+                  >
+                    <div className="w-8 h-8 rounded-md bg-slate-50 flex items-center justify-center text-indigo-500 shrink-0 group-hover:bg-white">
+                      <BrainCircuit size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-slate-700 truncate">{item.title}</p>
+                      <p className="text-[9px] text-slate-400">{new Date(item.createdAt).toLocaleDateString()}</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteHistoryItem(item.id);
+                      }}
+                      className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-md transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           {/* Export Grid */}
           <div className="mt-8 pt-6 border-t border-slate-100">
-            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">
+            <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-4">
               {t.exportLabel}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button 
-                onClick={() => mindMapData && ExportService.exportAsPdf(mindMapData, exportRef, setExportNode)} 
+                onClick={() => mindMapData && rfInstance.current && ExportService.exportAsPdf(mindMapData, rfInstance.current, exportRef, setExportNode)} 
                 disabled={!mindMapData || isGenerating}
                 className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
               >
@@ -170,7 +238,7 @@ export default function App() {
                 <span>PDF</span>
               </button>
               <button 
-                onClick={() => ExportService.exportAsPng()} 
+                onClick={() => rfInstance.current && ExportService.exportAsPng(rfInstance.current)} 
                 disabled={!mindMapData}
                 className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
               >
@@ -178,7 +246,7 @@ export default function App() {
                 <span>PNG</span>
               </button>
               <button 
-                onClick={() => ExportService.exportAsSvg()} 
+                onClick={() => rfInstance.current && ExportService.exportAsSvg(rfInstance.current)} 
                 disabled={!mindMapData}
                 className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
               >
@@ -213,7 +281,7 @@ export default function App() {
                 <div className="flex-1 h-full flex items-center justify-center">
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="animate-spin text-indigo-600" size={32} />
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t.generating}</span>
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">{t.generating}</span>
                   </div>
                 </div>
               }>
@@ -226,6 +294,7 @@ export default function App() {
                   onNodeSelect={handleNodeSelect}
                   selectedNodeDetails={selectedNodeId ? nodeDetailsCache[selectedNodeId] : null}
                   isDetailsLoading={isFetchingDetails}
+                  expandingNodes={expandingNodes}
                 />
               </Suspense>
             </motion.div>
@@ -264,6 +333,57 @@ export default function App() {
             {t.reset}
           </button>
         </div>
+
+        {hasDraft && !mindMapData && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute bottom-8 left-8 right-8 bg-white border border-indigo-100 p-4 rounded-2xl shadow-2xl shadow-indigo-100/50 z-30 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                <History size={20} />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-800">{t.restoreDraft}</h4>
+                <p className="text-[11px] text-slate-500">You have an unsaved mind map from your last session.</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={discardDraft}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                {t.startNew}
+              </button>
+              <button
+                onClick={restoreDraft}
+                className="px-5 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
+              >
+                {t.restore}
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {quotaError && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute top-24 left-1/2 -translate-x-1/2 bg-amber-50 border border-amber-200 p-4 rounded-2xl shadow-xl z-40 flex items-center gap-3 max-w-sm"
+          >
+            <AlertCircle className="text-amber-600 shrink-0" size={20} />
+            <div className="flex-1">
+              <p className="text-xs font-bold text-amber-900 leading-tight mb-1">{t.quotaExceeded}</p>
+              <button 
+                onClick={() => setQuotaError(false)}
+                className="text-[10px] font-bold text-amber-700 uppercase tracking-wider"
+              >
+                Dismiss
+              </button>
+            </div>
+          </motion.div>
+        )}
 
         {error && (
           <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-white border border-red-100 px-6 py-4 rounded-2xl flex flex-col items-center gap-4 shadow-2xl shadow-red-100 z-50 animate-in slide-in-from-bottom-4 max-w-md text-center">

@@ -39,6 +39,8 @@ type NodeData = {
   };
 };
 
+import { UI_CONFIG } from '../config/ui';
+
 export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<NodeData>>) => {
   const [isEditing, setIsEditing] = useState(false);
   const [text, setText] = useState(data.label);
@@ -66,7 +68,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     // Level 1: Root
     if (data.depth === 0) {
       return cn(
-        "bg-gradient-to-br from-indigo-500 to-purple-600 border-none text-white shadow-2xl scale-125 min-w-[200px] py-8 px-14 rounded-full font-black tracking-tight",
+        `bg-gradient-to-br from-indigo-500 to-purple-600 border-none text-white shadow-2xl scale-125 min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.ROOT}] py-8 px-14 rounded-full font-black tracking-tight`,
         selectedStyle
       );
     }
@@ -74,7 +76,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     // Level 2: Main Branches
     if (data.depth === 1) {
       return cn(
-        "bg-white border-2 text-slate-900 shadow-xl min-w-[200px] py-5 px-12 rounded-[2.5rem] font-extrabold uppercase tracking-widest",
+        `bg-white border-2 text-slate-900 shadow-xl min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.LEVEL_1}] py-5 px-12 rounded-[2.5rem] font-extrabold uppercase tracking-widest`,
         selectedStyle
       );
     }
@@ -82,7 +84,7 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     // Level 3: Entities/Categories
     if (data.depth === 2) {
       return cn(
-        "bg-white/90 border-2 text-slate-900 shadow-md min-w-[160px] py-3 px-6 rounded-2xl font-bold backdrop-blur-sm",
+        `bg-white/90 border-2 text-slate-900 shadow-md min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.LEVEL_2}] py-3 px-6 rounded-2xl font-bold backdrop-blur-sm`,
         selectedStyle
       );
     }
@@ -90,14 +92,14 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
     // Level 4: Groups/Sub-categories
     if (data.depth === 3) {
       return cn(
-        "bg-white/80 border text-slate-600 shadow-sm min-w-[140px] py-2 px-4 rounded-xl font-semibold italic backdrop-blur-sm",
+        `bg-white/80 border text-slate-600 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.LEVEL_3}] py-2 px-4 rounded-xl font-semibold italic backdrop-blur-sm`,
         selectedStyle
       );
     }
 
     // Level 5+: Leaves/Items
     return cn(
-      "bg-white/70 border border-slate-200 text-slate-500 shadow-sm min-w-[120px] py-1.5 px-3 rounded-lg text-[11px] font-medium backdrop-blur-sm",
+      `bg-white/70 border border-slate-200 text-slate-500 shadow-sm min-w-[${UI_CONFIG.NODE.MIN_WIDTHS.DEFAULT}] py-1.5 px-3 rounded-lg text-[11px] font-medium backdrop-blur-sm`,
       selectedStyle
     );
   };
@@ -179,8 +181,8 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
           }}
           className={cn(
             "absolute top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border-2 flex items-center justify-center shadow-xl transition-all hover:scale-110 z-50 group/expand",
-            // Positioned outside with a clear gap (20px) to avoid overlap
-            data.side === 'left' ? "-left-14" : "-right-14",
+            // Positioned outside with a clear gap to avoid overlap
+            data.side === 'left' ? `-left-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]` : `-right-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]`,
             data.isExpanded 
               ? "text-indigo-600 border-indigo-400 bg-indigo-50" 
               : "text-slate-500 border-slate-200 bg-white"

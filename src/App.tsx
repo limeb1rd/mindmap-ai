@@ -1,21 +1,26 @@
-import React, { useState, useRef, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useRef, Suspense, lazy, useCallback, useEffect } from 'react';
 import { 
-  Languages, 
   Send, 
-  Download, 
   FileJson, 
   FileImage, 
   FileCode, 
   FileText,
   Loader2,
   BrainCircuit,
-  Github
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReactFlowInstance } from '@xyflow/react';
 
-import { Language, DisplayMode, MindMapNode, MindMapData, translations } from './types';
+import { Language, DisplayMode, MindMapNode, translations } from './types';
 import { cn } from './lib/utils';
+
+// Hooks
+import { useMindMap } from './hooks/useMindMap';
+import { useNodeDetails } from './hooks/useNodeDetails';
+import { useServerHealth } from './hooks/useServerHealth';
+
+// Services
+import { ExportService } from './services/exportService';
 
 // Lazy load visualization components
 const MindMapViewer = lazy(() => import('./components/MindMap').then(m => ({ default: m.MindMapViewer })));
@@ -25,234 +30,53 @@ export default function App() {
   const [language, setLanguage] = useState<Language>('en');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('detailed');
   const [inputText, setInputText] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [mindMapData, setMindMapData] = useState<MindMapData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [nodeDetailsCache, setNodeDetailsCache] = useState<Record<string, any>>({});
-  const [isFetchingDetails, setIsFetchingDetails] = useState(false);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  
   const [exportNode, setExportNode] = useState<MindMapNode | null>(null);
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [isOverloaded, setIsOverloaded] = useState(false);
 
-  const handleNodeSelect = async (node: MindMapNode) => {
-    setSelectedNodeId(node.id);
-    
-    // Lazy load details if not in cache
-    if (!nodeDetailsCache[node.id] && node.id !== 'root') {
-      setIsFetchingDetails(true);
-      try {
-        const response = await fetch('/api/node-details', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            nodeTitle: node.title,
-            nodeType: node.type,
-            context: mindMapData?.title,
-            language 
-          }),
-        });
-        
-        if (response.ok) {
-          const details = await response.json();
-          setNodeDetailsCache(prev => ({ ...prev, [node.id]: details }));
-        }
-      } catch (err) {
-        console.error('Failed to fetch node details:', err);
-      } finally {
-        setIsFetchingDetails(false);
-      }
-    }
-  };
+  const isServerHealthy = useServerHealth();
+  
+  const {
+    isGenerating,
+    mindMapData,
+    error,
+    retryAttempt,
+    isOverloaded,
+    generate,
+    reset: resetMindMap,
+    setMindMapData
+  } = useMindMap(language);
+
+  const {
+    nodeDetailsCache,
+    isFetchingDetails,
+    selectedNodeId,
+    fetchDetails,
+    clearCache: clearNodeCache,
+    setSelectedNodeId
+  } = useNodeDetails(language);
+
   const exportRef = useRef<HTMLDivElement>(null);
   const rfInstance = useRef<ReactFlowInstance | null>(null);
+
+  const handleMindMapInit = useCallback((instance: ReactFlowInstance) => { 
+    rfInstance.current = instance; 
+  }, []);
+
+  const handleGenerate = useCallback(() => {
+    clearNodeCache();
+    generate(inputText);
+  }, [clearNodeCache, generate, inputText]);
+
+  const handleNodeSelect = useCallback((node: MindMapNode) => {
+    fetchDetails(node, mindMapData?.title);
+  }, [fetchDetails, mindMapData?.title]);
+
+  const handleReset = useCallback(() => {
+    resetMindMap();
+    setInputText('');
+    clearNodeCache();
+  }, [resetMindMap, clearNodeCache]);
+
   const t = translations[language];
-
-  const [isServerHealthy, setIsServerHealthy] = useState<boolean | null>(null);
-
-  // Check server health on mount
-  React.useEffect(() => {
-    const checkHealth = async () => {
-      try {
-        const response = await fetch('/api/health');
-        setIsServerHealthy(response.ok);
-      } catch (err) {
-        setIsServerHealthy(false);
-      }
-    };
-    checkHealth();
-  }, []);
-
-  const handleGenerate = async () => {
-    if (!inputText.trim() || isGenerating) return;
-
-    setIsGenerating(true);
-    setError(null);
-    setNodeDetailsCache({});
-    setSelectedNodeId(null);
-    setRetryAttempt(0);
-    setIsOverloaded(false);
-
-    const delays = [0, 2000, 5000, 10000, 20000];
-    let lastError: any;
-
-    for (let attempt = 0; attempt < delays.length; attempt++) {
-      setRetryAttempt(attempt);
-      
-      if (delays[attempt] > 0) {
-        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
-      }
-
-      try {
-        const response = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: inputText, language, attempt }),
-        }).catch(err => {
-          throw new Error(language === 'ru' 
-            ? "Сервер недоступен. Проверьте интернет-соединение."
-            : "Server is unreachable. Please check your internet connection.");
-        });
-
-        let data;
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          data = await response.json();
-        }
-
-        if (response.ok) {
-          setMindMapData(data);
-          setIsGenerating(false);
-          setIsOverloaded(false);
-          return;
-        }
-
-        // Handle 503 (Unavailable) or 429 (Resource Exhausted)
-        if (response.status === 503 || response.status === 429) {
-          setIsOverloaded(true);
-          continue;
-        }
-
-        throw new Error(data?.error || data?.details || t.error);
-      } catch (err: any) {
-        lastError = err;
-        if (!isOverloaded) break; // Only retry on overload
-      }
-    }
-
-    setIsGenerating(false);
-    if (isOverloaded) {
-      setError(t.aiOverloadedTerminal);
-    } else {
-      setError(lastError?.message || t.error);
-    }
-  };
-
-  const exportAsPng = useCallback(async () => {
-    const { toPng } = await import('html-to-image');
-    const element = document.querySelector('.react-flow') as HTMLElement;
-    if (element) {
-      // Mind Map Layer only
-      const dataUrl = await toPng(element, { backgroundColor: '#f8fafc', quality: 1 });
-      const link = document.createElement('a');
-      link.download = `mindmap-${Date.now()}.png`;
-      link.href = dataUrl;
-      link.click();
-    }
-  }, []);
-
-  const exportAsSvg = useCallback(async () => {
-    const { toSvg } = await import('html-to-image');
-    const element = document.querySelector('.react-flow') as HTMLElement;
-    if (element) {
-      const dataUrl = await toSvg(element, { backgroundColor: '#f8fafc' });
-      const link = document.createElement('a');
-      link.download = `mindmap-${Date.now()}.svg`;
-      link.href = dataUrl;
-      link.click();
-    }
-  }, []);
-
-  const exportAsPdf = useCallback(async () => {
-    if (!mindMapData) return;
-    
-    const element = document.querySelector('.react-flow') as HTMLElement;
-    if (!element) return;
-
-    try {
-      setIsGenerating(true);
-      
-      const [
-        { toPng },
-        { jsPDF }
-      ] = await Promise.all([
-        import('html-to-image'),
-        import('jspdf')
-      ]);
-
-      // 1. Capture Mind Map Layer
-      const mapDataUrl = await toPng(element, { backgroundColor: '#f8fafc', quality: 1 });
-      
-      const pdf = new jsPDF({
-        orientation: 'l',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      
-      // Page 1: Map
-      const mapImgWidth = pageWidth;
-      const mapImgHeight = (element.offsetHeight * mapImgWidth) / element.offsetWidth;
-      const yOffset = mapImgHeight < pageHeight ? (pageHeight - mapImgHeight) / 2 : 0;
-      pdf.addImage(mapDataUrl, 'PNG', 0, yOffset, mapImgWidth, mapImgHeight);
-
-      // Collect all nodes with significant metadata
-      const nodesWithMetadata: MindMapNode[] = [];
-      const traverse = (node: MindMapNode) => {
-        if (node.metadata && (node.metadata.description || node.metadata.importance || node.metadata.detailedBiography)) {
-          nodesWithMetadata.push(node);
-        }
-        node.children?.forEach(traverse);
-      };
-      traverse(mindMapData);
-
-      // Export each card in the order found in the map
-      for (const node of nodesWithMetadata) {
-        setExportNode(node);
-        // Wait for state to apply and DOM to render
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        if (exportRef.current) {
-          const cardUrl = await toPng(exportRef.current, { backgroundColor: '#ffffff', quality: 1 });
-          pdf.addPage([210, 297], 'p'); // A4 Portrait for details
-          const cardWidth = 210;
-          const cardHeight = (exportRef.current.offsetHeight * cardWidth) / exportRef.current.offsetWidth;
-          pdf.addImage(cardUrl, 'PNG', 0, 0, cardWidth, cardHeight > 297 ? 297 : cardHeight);
-        }
-      }
-
-      pdf.save(`mindmap-full-${Date.now()}.pdf`);
-    } catch (err) {
-      console.error('PDF Export failed', err);
-    } finally {
-      setIsGenerating(false);
-      setExportNode(null);
-    }
-  }, [mindMapData]);
-
-  const exportAsJson = useCallback(() => {
-    if (!mindMapData) return;
-    const blob = new Blob([JSON.stringify(mindMapData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.download = `mindmap-${Date.now()}.json`;
-    link.href = url;
-    link.click();
-    URL.revokeObjectURL(url);
-  }, [mindMapData]);
 
   return (
     <div className="flex h-screen w-screen bg-[#F8FAFC] overflow-hidden">
@@ -316,7 +140,11 @@ export default function App() {
               <div className="flex flex-col items-center">
                 <div className="flex items-center gap-2">
                   <Loader2 className="animate-spin" size={16} />
-                  <span className="whitespace-pre-line text-center">{isOverloaded ? t.aiOverloaded : t.generating}</span>
+                  <span className="whitespace-pre-line text-center text-[11px]">
+                    {retryAttempt === 0 ? t.generatingKnowledge : 
+                     retryAttempt === 1 ? t.usingBackup : 
+                     t.retrying}
+                  </span>
                 </div>
               </div>
             ) : (
@@ -333,19 +161,35 @@ export default function App() {
               {t.exportLabel}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={exportAsPdf} className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <button 
+                onClick={() => mindMapData && ExportService.exportAsPdf(mindMapData, exportRef, setExportNode)} 
+                disabled={!mindMapData || isGenerating}
+                className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
+              >
                 <FileText size={14} className="text-slate-400" />
                 <span>PDF</span>
               </button>
-              <button onClick={exportAsPng} className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <button 
+                onClick={() => ExportService.exportAsPng()} 
+                disabled={!mindMapData}
+                className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
+              >
                 <FileImage size={14} className="text-slate-400" />
                 <span>PNG</span>
               </button>
-              <button onClick={exportAsSvg} className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <button 
+                onClick={() => ExportService.exportAsSvg()} 
+                disabled={!mindMapData}
+                className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
+              >
                 <FileCode size={14} className="text-slate-400" />
                 <span>SVG</span>
               </button>
-              <button onClick={exportAsJson} className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all">
+              <button 
+                onClick={() => mindMapData && ExportService.exportAsJson(mindMapData)} 
+                disabled={!mindMapData}
+                className="flex items-center justify-center gap-2 py-2.5 px-3 bg-white border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all disabled:opacity-50"
+              >
                 <FileJson size={14} className="text-slate-400" />
                 <span>JSON</span>
               </button>
@@ -378,7 +222,7 @@ export default function App() {
                   language={language}
                   displayMode={displayMode}
                   onChange={setMindMapData} 
-                  onInit={(instance) => (rfInstance.current = instance)}
+                  onInit={handleMindMapInit}
                   onNodeSelect={handleNodeSelect}
                   selectedNodeDetails={selectedNodeId ? nodeDetailsCache[selectedNodeId] : null}
                   isDetailsLoading={isFetchingDetails}
@@ -414,12 +258,7 @@ export default function App() {
           </div>
           <div className="w-px h-3 bg-slate-200"></div>
           <button 
-            onClick={() => {
-              setMindMapData(null);
-              setInputText('');
-              setNodeDetailsCache({});
-              setSelectedNodeId(null);
-            }}
+            onClick={handleReset}
             className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest hover:text-indigo-800 transition-colors"
           >
             {t.reset}

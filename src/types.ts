@@ -73,6 +73,9 @@ export interface Translation {
   nodeType: string;
   aiOverloaded: string;
   aiOverloadedTerminal: string;
+  retrying: string;
+  usingBackup: string;
+  generatingKnowledge: string;
 }
 
 export const translations: Record<Language, Translation> = {
@@ -116,7 +119,10 @@ export const translations: Record<Language, Translation> = {
     relatedNodes: "Connections",
     nodeType: "Classification",
     aiOverloaded: "AI Service is temporarily overloaded.\nRetrying connection...",
-    aiOverloadedTerminal: "Service is temporarily overloaded.\nPlease try again in a few minutes."
+    aiOverloadedTerminal: "Service is temporarily overloaded.\nPlease try again in a few minutes.",
+    retrying: "Performing a retry attempt...",
+    usingBackup: "Using a backup model...",
+    generatingKnowledge: "Generating knowledge map..."
   },
   ru: {
     title: "AI Генератор Ментальных Карт",
@@ -158,6 +164,9 @@ export const translations: Record<Language, Translation> = {
     relatedNodes: "Связи",
     nodeType: "Классификация",
     aiOverloaded: "Сервис ИИ временно перегружен.\nПовторяем попытку подключения...",
-    aiOverloadedTerminal: "Сервис временно перегружен.\nПопробуйте снова через несколько минут."
+    aiOverloadedTerminal: "Сервис временно перегружен.\nПопробуйте снова через несколько минут.",
+    retrying: "Выполняется повторная попытка...",
+    usingBackup: "Используется резервная модель...",
+    generatingKnowledge: "Генерируется карта знаний..."
   }
 };

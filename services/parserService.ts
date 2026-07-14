@@ -30,23 +30,60 @@ export const cleanJSON = (text: string) => {
   return cleaned;
 };
 
-export function isValidMindMapSkeleton(parsed: any): boolean {
-  if (!parsed || typeof parsed !== 'object') return false;
-  if (typeof parsed.title !== 'string') return false;
-  if (!Array.isArray(parsed.children)) return false;
-  return true;
-}
+export const validateSkeletonStructure = (parsed: any, content: string): { valid: boolean; issues: string[] } => {
+  const issues: string[] = [];
+
+  if (!parsed || typeof parsed !== 'object') {
+    return { valid: false, issues: ["Parsed output is not an object."] };
+  }
+
+  if (!parsed.title || typeof parsed.title !== 'string') {
+    issues.push("Missing or invalid 'title' at root level.");
+  }
+
+  if (!Array.isArray(parsed.children)) {
+    issues.push("'children' must be an array.");
+  } else {
+    // Check for duplicate IDs
+    const ids = new Set<string>();
+    const checkIds = (nodes: any[]) => {
+      for (const node of nodes) {
+        if (node.id) {
+          if (ids.has(node.id)) issues.push(`Duplicate ID found: ${node.id}`);
+          ids.add(node.id);
+        }
+        if (Array.isArray(node.children)) checkIds(node.children);
+      }
+    };
+    checkIds(parsed.children);
+
+    // Heuristic: Check for grouping quality
+    // If content has many dates/years (suggesting high information density) but very few groups
+    const yearMatches = content.match(/\b(18|19|20)\d{2}\b/g) || [];
+    if (yearMatches.length >= 10 && parsed.children.length < 2) {
+      issues.push("Content contains many specific dates/years but the generated structure lacks sufficient top-level grouping (found < 2 groups).");
+    }
+
+    // Check for empty required fields in children
+    const validateNodes = (nodes: any[]) => {
+      nodes.forEach((node, idx) => {
+        if (!node.title) issues.push(`Node missing title at level children[${idx}]`);
+        if (node.children && Array.isArray(node.children)) validateNodes(node.children);
+      });
+    };
+    validateNodes(parsed.children);
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues
+  };
+};
 
 export function parseMindMapSkeleton(rawText: string) {
   const cleanedText = cleanJSON(rawText);
   try {
-    const parsed = JSON.parse(cleanedText);
-    
-    if (!isValidMindMapSkeleton(parsed)) {
-      throw new Error("Invalid mind map structure: Root node must have a title and children array.");
-    }
-    
-    return parsed;
+    return JSON.parse(cleanedText);
   } catch (error: any) {
     if (error.message.includes("Unexpected end of JSON input")) {
       throw new Error("The source content is too complex and the AI response was truncated. Try selecting a smaller part of the text or reducing complexity.");

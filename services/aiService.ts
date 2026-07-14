@@ -4,7 +4,7 @@ import { withAIDebug, withFailover } from "./retryService";
 import { buildSkeletonGenerationPrompt, buildNodeDetailsPrompt, buildBranchExpansionPrompt } from "./promptBuilder";
 import { AI_CONFIG, getModelConfig } from "../src/config/ai";
 import { ModelManager, TaskType } from "./modelManager";
-import { parseMindMapSkeleton, parseNodeDetails, cleanJSON } from "./parserService";
+import { parseMindMapSkeleton, parseNodeDetails, cleanJSON, validateSkeletonStructure } from "./parserService";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -55,9 +55,15 @@ export async function generateMindMapFromContent(content: string, language: stri
     attempt: modelIndex
   };
 
+  let validationIssues: string[] = [];
+
   try {
-    const rawText = await withFailover(async (model, signal) => {
-      const prompt = buildSkeletonGenerationPrompt(content);
+    const parsed = await withFailover(async (model, signal) => {
+      const basePrompt = buildSkeletonGenerationPrompt(content);
+      const prompt = validationIssues.length > 0 
+        ? `${basePrompt}\n\nCRITICAL: ISSUES FOUND IN PREVIOUS ATTEMPT. PLEASE FIX THESE TO ENSURE A CORRECT AND COMPLETE MIND MAP STRUCTURE:\n- ${validationIssues.join('\n- ')}`
+        : basePrompt;
+        
       const aiStart = Date.now();
       
       const response = await ai.models.generateContent({
@@ -67,23 +73,32 @@ export async function generateMindMapFromContent(content: string, language: stri
           responseMimeType: "application/json",
           responseSchema: SKELETON_RESPONSE_SCHEMA,
           maxOutputTokens: AI_CONFIG.LIMITS.MAX_TOKENS,
-          temperature: 0.1, // Lower temperature for more consistent JSON
+          temperature: 0.1,
           abortSignal: signal,
         },
       });
       
       console.log(`[Debug AI] AI Call duration: ${Date.now() - aiStart}ms | Model: ${model}`);
-      return response.text;
+      
+      const rawText = response.text;
+      if (!rawText || rawText.trim().length === 0) {
+        throw new Error("Empty response from skeleton generator.");
+      }
+
+      const parseStart = Date.now();
+      const tempParsed = parseMindMapSkeleton(rawText);
+      console.log(`[Debug AI] Parse duration: ${Date.now() - parseStart}ms`);
+
+      const validation = validateSkeletonStructure(tempParsed, content);
+      if (!validation.valid) {
+        validationIssues = validation.issues;
+        console.warn("[Debug AI] Validation failed. Retrying with issues:", validation.issues);
+        throw new Error(`Invalid skeleton structure: ${validation.issues.join('; ')}`);
+      }
+
+      return tempParsed;
     }, context, "SkeletonGeneration");
 
-    if (!rawText || rawText.trim().length === 0) {
-      throw new Error("Empty response from skeleton generator.");
-    }
-
-    const parseStart = Date.now();
-    const parsed = parseMindMapSkeleton(rawText);
-    console.log(`[Debug AI] Parse duration: ${Date.now() - parseStart}ms`);
-    
     // Node counting for logging
     let nodeCount = 1;
     const countNodes = (n: any) => {
@@ -100,6 +115,9 @@ export async function generateMindMapFromContent(content: string, language: stri
     return parsed;
   } catch (error: any) {
     console.error("[Debug AI] SKELETON CRITICAL ERROR:", error);
+    if (validationIssues.length > 0) {
+      throw new Error("Failed to build a correct map structure after multiple attempts. Please try simplifying your request or checking the source content.");
+    }
     throw error;
   }
 }

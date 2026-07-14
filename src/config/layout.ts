@@ -38,7 +38,7 @@ export const LAYOUT_CONFIG = {
       V_PADDING: 35,
       MIN_HEIGHT: 70
     },
-    TOGGLE_BUTTON_MARGIN: 60,
+    TOGGLE_BUTTON_MARGIN: 30,
     METADATA_HEIGHT: 20
   },
   

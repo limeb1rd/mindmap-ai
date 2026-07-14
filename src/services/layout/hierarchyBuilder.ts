@@ -59,6 +59,17 @@ export class HierarchyBuilder {
     return node.expanded ?? true;
   }
 
+  private canvas: HTMLCanvasElement | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
+
+  private getContext() {
+    if (!this.ctx && typeof document !== 'undefined') {
+      this.canvas = document.createElement('canvas');
+      this.ctx = this.canvas.getContext('2d');
+    }
+    return this.ctx;
+  }
+
   private getEstimatedDimensions(node: MindMapNode, depth: number) {
     const hash = `${node.title}-${node.summary}-${depth}-${node.children?.length || 0}`;
     const cached = this.dimensionCache.get(node.id);
@@ -70,17 +81,40 @@ export class HierarchyBuilder {
       ? LAYOUT_CONFIG.DIMENSIONS.ROOT 
       : (depth === 1 ? LAYOUT_CONFIG.DIMENSIONS.LEVEL_1 : LAYOUT_CONFIG.DIMENSIONS.DEFAULT);
 
-    const textLen = node.title.length;
-    const charWidth = config.CHAR_WIDTH;
+    const ctx = this.getContext();
+    let measuredWidth = 0;
+    const title = depth === 1 ? node.title.toUpperCase() : node.title;
+
+    if (ctx) {
+      // Font mapping from MindMapNode.tsx styles
+      let font = '12px Inter, sans-serif';
+      if (depth === 0) font = '900 18px Inter, sans-serif';
+      else if (depth === 1) font = '800 14px Inter, sans-serif';
+      else if (depth === 2) font = '700 12px Inter, sans-serif';
+      else font = '500 10px Inter, sans-serif';
+
+      ctx.font = font;
+      measuredWidth = ctx.measureText(title).width;
+    } else {
+      // Fallback if canvas is not available
+      measuredWidth = title.length * config.CHAR_WIDTH;
+    }
+
     const horizontalPadding = config.H_PADDING;
     const toggleButtonMargin = node.children && node.children.length > 0 ? LAYOUT_CONFIG.DIMENSIONS.TOGGLE_BUTTON_MARGIN : 0;
     const maxWidth = config.MAX_WIDTH;
     
-    const preferredWidth = (textLen * charWidth) + horizontalPadding + toggleButtonMargin;
-    const width = Math.min(maxWidth, Math.max(config.MIN_WIDTH, preferredWidth));
-    const contentWidth = width - horizontalPadding - toggleButtonMargin;
+    // We try to fit text in 1 line if possible, otherwise wrap to 2 lines
+    // preferredWidth is for 1 line
+    const preferredWidth = measuredWidth + horizontalPadding + toggleButtonMargin;
     
-    const lines = Math.ceil((textLen * charWidth) / contentWidth);
+    // Final width clamped between MIN and MAX
+    const width = Math.min(maxWidth, Math.max(config.MIN_WIDTH, preferredWidth));
+    
+    // Calculate lines (max 2 due to line-clamp-2)
+    const availableTextWidth = width - horizontalPadding - toggleButtonMargin;
+    const lines = Math.min(2, Math.ceil(measuredWidth / availableTextWidth) || 1);
+    
     const lineHeight = config.LINE_HEIGHT;
     const verticalPadding = config.V_PADDING;
     const metadataHeight = node.summary ? LAYOUT_CONFIG.DIMENSIONS.METADATA_HEIGHT : 0;

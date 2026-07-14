@@ -1,3 +1,4 @@
+import * as d3 from 'd3-hierarchy';
 import { LAYOUT_CONFIG } from '../../config/layout';
 import { LayoutNode } from './types';
 
@@ -5,61 +6,99 @@ export class CoordinateCalculator {
   public calculate(sideNodes: LayoutNode[], side: 'left' | 'right'): LayoutNode[] {
     if (sideNodes.length === 0) return [];
 
-    const result: LayoutNode[] = [];
-
-    // 1. Calculate subtree heights recursively
-    const calculateSubtreeHeight = (node: LayoutNode): number => {
-      if (!node.children || node.children.length === 0) {
-        node.totalSubtreeHeight = node.height;
-        return node.height;
-      }
-
-      const childrenHeight = node.children.reduce((acc, child, index) => {
-        const h = calculateSubtreeHeight(child);
-        const gap = index === 0 ? 0 : LAYOUT_CONFIG.MIN_V_GAP_BASE;
-        return acc + h + gap;
-      }, 0);
-
-      node.totalSubtreeHeight = Math.max(node.height, childrenHeight);
-      return node.totalSubtreeHeight;
+    // 1. Create a dummy root to wrap all nodes for this side
+    const dummyRootData = {
+      id: `dummy-${side}`,
+      title: 'dummy',
+      width: 0,
+      height: 0,
+      children: sideNodes
     };
 
-    // Calculate heights for all branches
-    sideNodes.forEach(node => calculateSubtreeHeight(node));
+    // 2. Create d3 hierarchy
+    const root = d3.hierarchy<any>(dummyRootData, (d) => d.children);
 
-    // 2. Calculate total height of the side to center it
-    const totalSideHeight = sideNodes.reduce((acc, node, index) => {
-      const gap = index === 0 ? 0 : LAYOUT_CONFIG.V_GAP_BRANCH;
-      return acc + (node.totalSubtreeHeight || 0) + gap;
-    }, 0);
+    // 3. Configure tree layout
+    // In d3.tree, nodeSize([height, width]) means x is vertical, y is horizontal
+    // We use a vertical spacing that accounts for base gap plus some padding
+    const vSpacing = LAYOUT_CONFIG.MIN_V_GAP_BASE;
+    const hSpacing = LAYOUT_CONFIG.H_GAP_LEVEL;
+    
+    const treeLayout = d3.tree<any>().nodeSize([vSpacing, hSpacing]);
+    treeLayout(root);
 
-    // 3. Assign positions recursively
-    let currentY = -totalSideHeight / 2;
+    const result: LayoutNode[] = [];
+    
+    // 4. Calculate vertical centering and root gap
+    const level1Nodes = root.children || [];
+    
+    // Initial centering based on the dummy root's children (level 1 nodes)
+    let minY = Infinity;
+    let maxY = -Infinity;
+    
+    root.descendants().slice(1).forEach(d => {
+      if (d.x < minY) minY = d.x;
+      if (d.x > maxY) maxY = d.x;
+    });
 
-    const assignPositions = (node: LayoutNode, xOffset: number, startY: number) => {
-      const centerY = startY + (node.totalSubtreeHeight || 0) / 2;
-      const centerX = (side === 'right' ? 1 : -1) * (xOffset + LAYOUT_CONFIG.H_GAP_BASE);
+    const sideHeight = maxY - minY;
+    let verticalOffset = -sideHeight / 2 - minY;
 
-      node.centerX = centerX;
-      node.centerY = centerY;
-      node.side = side;
-      result.push(node);
+    // Requirement 3: Minimum vertical gap between root and level 1 nodes
+    // Root is at (0,0). Level 1 nodes are children of our dummy root.
+    // Gap: (rootHalfHeight + nodeHalfHeight + V_GAP_BRANCH)
+    const minRequiredGap = (LAYOUT_CONFIG.DIMENSIONS.ROOT.MIN_HEIGHT / 2) + 
+                          (LAYOUT_CONFIG.DIMENSIONS.LEVEL_1.MIN_HEIGHT / 2) + 
+                          LAYOUT_CONFIG.V_GAP_BRANCH;
 
-      if (node.children && node.children.length > 0) {
-        let childY = startY + ((node.totalSubtreeHeight || 0) - (node.children.reduce((acc, c, i) => acc + (c.totalSubtreeHeight || 0) + (i === 0 ? 0 : LAYOUT_CONFIG.MIN_V_GAP_BASE), 0))) / 2;
-        
-        node.children.forEach((child, index) => {
-          const nextXOffset = xOffset + Math.max(node.width, LAYOUT_CONFIG.DEFAULT_LEVEL_WIDTH) + LAYOUT_CONFIG.H_GAP_LEVEL;
-          assignPositions(child, nextXOffset, childY);
-          childY += (child.totalSubtreeHeight || 0) + LAYOUT_CONFIG.MIN_V_GAP_BASE;
+    // Push level 1 nodes (and their subtrees) away from the center if they clash with root
+    const above = level1Nodes.filter(d => (d.x + verticalOffset) < 0);
+    const below = level1Nodes.filter(d => (d.x + verticalOffset) >= 0);
+    
+    const shifts = new Map<string, number>();
+    
+    if (above.length > 0) {
+      const closestAboveY = Math.max(...above.map(d => d.x + verticalOffset));
+      if (closestAboveY > -minRequiredGap) {
+        const shift = -minRequiredGap - closestAboveY;
+        above.forEach(d => {
+          d.descendants().forEach(desc => shifts.set(desc.data.id, shift));
         });
       }
-    };
+    }
+    
+    if (below.length > 0) {
+      const closestBelowY = Math.min(...below.map(d => d.x + verticalOffset));
+      if (closestBelowY < minRequiredGap) {
+        const shift = minRequiredGap - closestBelowY;
+        below.forEach(d => {
+          d.descendants().forEach(desc => shifts.set(desc.data.id, shift));
+        });
+      }
+    }
 
-    sideNodes.forEach((node, index) => {
-      const branchStartY = currentY;
-      assignPositions(node, 0, branchStartY);
-      currentY += (node.totalSubtreeHeight || 0) + LAYOUT_CONFIG.V_GAP_BRANCH;
+    // 5. Final coordinate assignment
+    root.descendants().slice(1).forEach(d => {
+      const node = d.data as LayoutNode;
+      const nodeShift = shifts.get(node.id) || 0;
+      
+      // Horizontal (X) - calculate based on path width
+      let x = 0;
+      let curr = d;
+      while (curr.parent && curr.parent.depth > 0) {
+        const parentNode = curr.parent.data as LayoutNode;
+        x += Math.max(parentNode.width, LAYOUT_CONFIG.DEFAULT_LEVEL_WIDTH) + LAYOUT_CONFIG.H_GAP_LEVEL;
+        curr = curr.parent;
+      }
+      const finalX = (side === 'right' ? 1 : -1) * (x + LAYOUT_CONFIG.H_GAP_BASE);
+      
+      // Vertical (Y)
+      const finalY = d.x + verticalOffset + nodeShift;
+
+      node.centerX = finalX;
+      node.centerY = finalY;
+      node.side = side;
+      result.push(node);
     });
 
     return result;

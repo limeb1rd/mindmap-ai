@@ -189,18 +189,21 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
             </form>
           ) : (
             <div className="flex flex-col items-center gap-1">
-              <div className="flex items-center justify-center gap-1.5">
+              <div className="flex items-center justify-center gap-1.5 w-full pr-7">
                 {data.isLocked && (
                   <Pin size={12} className={cn(
-                    "rotate-45",
+                    "shrink-0 rotate-45",
                     data.depth === 0 ? "text-white/70" : "text-slate-600"
                   )} aria-hidden="true" />
                 )}
-                <span className={cn(
-                  "font-bold text-center leading-tight transition-colors whitespace-pre-wrap break-words w-full",
-                  getFontSize(),
-                  data.depth === 0 ? "text-white" : "text-slate-800"
-                )}>
+                <span 
+                  className={cn(
+                    "font-bold text-center leading-tight transition-colors line-clamp-2 break-words w-full",
+                    getFontSize(),
+                    data.depth === 0 ? "text-white" : "text-slate-800"
+                  )}
+                  title={data.label}
+                >
                   {data.label}
                 </span>
               </div>
@@ -227,10 +230,8 @@ export const MindMapNode = React.memo(({ data, id, selected }: NodeProps<Node<No
           tabIndex={-1}
           aria-label={data.isExpanding ? "Expanding" : (data.isExpanded ? data.t.collapse : data.t.expand)}
           className={cn(
-            "absolute top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white border-2 flex items-center justify-center shadow-xl transition-all z-50 group/expand",
+            "absolute -bottom-2 -right-2 w-7 h-7 rounded-full bg-white border-2 flex items-center justify-center shadow-xl transition-all z-50 group/expand",
             data.isExpanding ? "hover:scale-100 cursor-wait" : "hover:scale-110",
-            // Positioned outside with a clear gap to avoid overlap
-            data.side === 'left' ? `-left-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]` : `-right-[${UI_CONFIG.NODE.GAPS.TOGGLE_OUTSIDE}]`,
             data.isExpanding 
               ? "text-indigo-400 border-indigo-200"
               : (data.isExpanded 

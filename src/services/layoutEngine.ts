@@ -67,11 +67,25 @@ export class LayoutEngine {
     const leftLayout = this.coordinateCalculator.calculate(left, 'left');
     const rightLayout = this.coordinateCalculator.calculate(right, 'right');
 
-    const createFlowNode = (node: LayoutNode, center: { x: number; y: number }, color: string): Node => {
+    const calculateAccOffset = (node: LayoutNode, idealTopLeft: { x: number; y: number }, parentAccOffset: { x: number; y: number }) => {
       const isLocked = !!this.nodePositions[node.id];
+      if (isLocked) {
+        const manualPos = this.nodePositions[node.id];
+        return {
+          x: manualPos.x - idealTopLeft.x,
+          y: manualPos.y - idealTopLeft.y
+        };
+      }
+      return parentAccOffset;
+    };
+
+    const createFlowNode = (node: LayoutNode, idealCenter: { x: number; y: number }, accOffset: { x: number; y: number }, color: string): Node => {
+      const idealTopLeft = this.getTopLeftFromCenter(idealCenter, node.width, node.height);
+      const isLocked = !!this.nodePositions[node.id];
+      
       const finalPos = isLocked 
         ? this.nodePositions[node.id] 
-        : this.getTopLeftFromCenter(center, node.width, node.height);
+        : { x: idealTopLeft.x + accOffset.x, y: idealTopLeft.y + accOffset.y };
 
       if (!isLocked) {
         this.autoLayoutCache[node.id] = finalPos;
@@ -96,8 +110,8 @@ export class LayoutEngine {
           onToggleExpand: options.callbacks.onToggleExpand,
           onSelect: options.callbacks.onSelect,
           t: options.t,
-          centerX: center.x,
-          centerY: center.y
+          centerX: idealCenter.x + (isLocked ? (finalPos.x - idealTopLeft.x) : accOffset.x),
+          centerY: idealCenter.y + (isLocked ? (finalPos.y - idealTopLeft.y) : accOffset.y)
         },
         position: finalPos,
         style: {
@@ -107,51 +121,51 @@ export class LayoutEngine {
       };
     };
 
-    // Add root
-    const manualRootPos = this.nodePositions[rootId];
+    // 1. Calculate root ideal position and its accumulated offset
+    const rootIdealCenter = { x: 0, y: 0 };
+    const rootIdealTopLeft = this.getTopLeftFromCenter(rootIdealCenter, rootDims.width, rootDims.height);
+    const rootAccOffset = calculateAccOffset({ id: rootId } as any, rootIdealTopLeft, { x: 0, y: 0 });
     
-    // We center everything around 0,0 by default
-    let rootCenter = { x: 0, y: 0 };
-    if (manualRootPos) {
-      rootCenter = this.getCenterFromTopLeft(manualRootPos, rootDims.width, rootDims.height);
-    }
-    
+    // 2. Add root node
     newNodes.push(createFlowNode({ 
       id: rootId, 
       title: mindMap.title, 
       depth: 0, 
       width: rootDims.width, 
-      height: rootDims.height 
-    } as any, rootCenter, '#6366f1'));
+      height: rootDims.height,
+      expanded: true
+    } as any, rootIdealCenter, { x: 0, y: 0 }, '#6366f1'));
 
     // Recursive processor for branches
-    const processRecursive = (node: LayoutNode, parentId: string, side: 'left' | 'right', branchColor: string) => {
-      // Offset by root center if it was moved manually
-      const centerX = node.centerX! + rootCenter.x;
-      const centerY = node.centerY! + rootCenter.y;
+    const processRecursive = (node: LayoutNode, parentId: string, side: 'left' | 'right', branchColor: string, accOffset: { x: number; y: number }) => {
+      const idealCenter = { x: node.centerX!, y: node.centerY! };
+      const idealTopLeft = this.getTopLeftFromCenter(idealCenter, node.width, node.height);
       
-      newNodes.push(createFlowNode(node, { x: centerX, y: centerY }, branchColor));
+      newNodes.push(createFlowNode(node, idealCenter, accOffset, branchColor));
       
       if (parentId !== '') {
         newEdges.push(this.edgeGenerator.createEdge(parentId, node.id, side, branchColor, node.depth));
       }
 
+      // Pass down this node's accumulated offset to its children
+      const nextAccOffset = calculateAccOffset(node, idealTopLeft, accOffset);
+
       if (node.children) {
         node.children.forEach(child => {
-          processRecursive(child, node.id, side, branchColor);
+          processRecursive(child, node.id, side, branchColor, nextAccOffset);
         });
       }
     };
 
-    // Process sides
+    // Process sides with root's accumulated offset
     rightLayout.filter(n => n.depth === 1).forEach((branch, i) => {
       const color = options.branchColors[i % options.branchColors.length];
-      processRecursive(branch, rootId, 'right', color);
+      processRecursive(branch, rootId, 'right', color, rootAccOffset);
     });
 
     leftLayout.filter(n => n.depth === 1).forEach((branch, i) => {
       const color = options.branchColors[(i + right.length) % options.branchColors.length];
-      processRecursive(branch, rootId, 'left', color);
+      processRecursive(branch, rootId, 'left', color, rootAccOffset);
     });
 
     // Semantic cross-links

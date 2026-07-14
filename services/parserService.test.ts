@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanJSON, parseMindMapSkeleton, parseNodeDetails } from './parserService';
+import { cleanJSON, parseMindMapSkeleton, parseNodeDetails, validateSkeletonStructure } from './parserService';
 
 describe('parserService', () => {
   describe('cleanJSON', () => {
@@ -20,21 +20,58 @@ describe('parserService', () => {
   });
 
   describe('parseMindMapSkeleton', () => {
-    it('should parse a valid skeleton', () => {
+    it('should parse a valid skeleton JSON', () => {
       const input = '{"title": "Root", "summary": "Sum", "children": []}';
       const result = parseMindMapSkeleton(input);
       expect(result.title).toBe('Root');
       expect(result.children).toEqual([]);
     });
 
-    it('should throw error for invalid structure', () => {
-      const input = '{"not_title": "Root"}';
-      expect(() => parseMindMapSkeleton(input)).toThrow('Invalid mind map structure');
-    });
-
     it('should handle truncated JSON error message', () => {
       const input = '{"title": "Root", "children": [';
       expect(() => parseMindMapSkeleton(input)).toThrow('The source content is too complex');
+    });
+  });
+
+  describe('validateSkeletonStructure', () => {
+    it('should validate a correct skeleton', () => {
+      const input = { title: "Root", summary: "Sum", children: [] };
+      const result = validateSkeletonStructure(input, "some content");
+      expect(result.valid).toBe(true);
+    });
+
+    it('should catch missing title', () => {
+      const input = { not_title: "Root", children: [] };
+      const result = validateSkeletonStructure(input, "some content");
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContain("Missing or invalid 'title' at root level.");
+    });
+
+    it('should catch duplicate IDs', () => {
+      const input = {
+        title: "Root",
+        children: [
+          { id: "1", title: "Child 1", children: [] },
+          { id: "1", title: "Child 2", children: [] }
+        ]
+      };
+      const result = validateSkeletonStructure(input, "some content");
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContain("Duplicate ID found: 1");
+    });
+
+    it('should catch suspicious lack of grouping (heuristic)', () => {
+      const input = {
+        title: "Root",
+        children: [
+          { id: "1", title: "Child 1", children: [] }
+        ]
+      };
+      // Content with 10 years
+      const content = "1990 1991 1992 1993 1994 1995 1996 1997 1998 1999";
+      const result = validateSkeletonStructure(input, content);
+      expect(result.valid).toBe(false);
+      expect(result.issues[0]).toContain("lacks sufficient top-level grouping");
     });
   });
 

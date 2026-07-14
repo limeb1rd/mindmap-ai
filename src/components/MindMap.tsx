@@ -92,6 +92,8 @@ const MindMapCanvas: React.FC<Props> = ({
   onChange, 
   onInit,
   onNodeSelect,
+  selectedNodeDetails,
+  isDetailsLoading,
   expandingNodes,
 }) => {
   const [nodes, setNodes, internalOnNodesChange] = useNodesState([]);
@@ -441,6 +443,8 @@ const MindMapCanvas: React.FC<Props> = ({
           {selectedNodeId && (
             <NodeDetails 
               node={selectedNodeId === 'root' ? { id: 'root', title: data.title, summary: data.summary, type: 'root', children: data.children } as MindMapNode : findNodeById(data.children, selectedNodeId)}
+              details={selectedNodeDetails}
+              isLoading={isDetailsLoading}
               language={language}
               onClose={() => setSelectedNodeId(null)}
               onSelectLink={handleSelect}
